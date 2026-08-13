@@ -22,7 +22,9 @@ class PipelineConfig(BaseModel):
     corpus_dir: str
     index_root: str
     k: int = 10
-    abstain_threshold: float = 0.25
+    # applied to the best dense cosine across strategies; e5 similarities
+    # sit high (roughly 0.75-0.95), so the useful range is narrow
+    abstain_threshold: float = 0.85
     strategies: list[str] | None = None
     model: str = DEFAULT_MODEL
     device: str | None = None
@@ -61,10 +63,14 @@ def build_text_pipeline(runtime: Runtime) -> Pipeline:
 
     def abstain_gate(ctx):
         r = ctx["retrieval"]
-        if not r.hits or r.confidence < cfg.abstain_threshold:
+        dense = [
+            v for name, v in r.strategy_top_scores.items() if name.endswith("_dense")
+        ]
+        signal = max(dense) if dense else r.confidence
+        if not r.hits or signal < cfg.abstain_threshold:
             return Refusal(
                 reason_code="low_confidence",
-                message=f"confidence={r.confidence:.3f} below {cfg.abstain_threshold}",
+                message=f"confidence={signal:.3f} below {cfg.abstain_threshold}",
             )
         return {}
 

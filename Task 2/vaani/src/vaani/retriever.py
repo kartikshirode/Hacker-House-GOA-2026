@@ -27,6 +27,9 @@ class Hit(BaseModel):
 class RetrievalResult(BaseModel):
     hits: list[Hit]
     confidence: float
+    # best raw score per strategy; dense cosines are the abstention signal,
+    # since RRF ranks alone cannot tell "nothing relevant exists"
+    strategy_top_scores: dict[str, float] = Field(default_factory=dict)
     timings_ms: dict[str, float] = Field(default_factory=dict)
 
 
@@ -47,10 +50,13 @@ class Retriever:
         sources: dict[int, list[str]] = {}
         timings: dict[str, float] = {}
 
+        top_scores: dict[str, float] = {}
         for name in active:
             t0 = time.perf_counter()
-            rows, _scores = self.strategies[name].search_rows(query_text, query_vec, k)
+            rows, scores = self.strategies[name].search_rows(query_text, query_vec, k)
             timings[name] = (time.perf_counter() - t0) * 1000
+            scores = np.asarray(scores)
+            top_scores[name] = float(scores[0]) if scores.size else 0.0
             for rank, row in enumerate(np.asarray(rows).tolist()):
                 fused[row] = fused.get(row, 0.0) + 1.0 / (RRF_K + rank)
                 sources.setdefault(row, []).append(name)
@@ -72,4 +78,9 @@ class Retriever:
             for (row, score), rec in zip(ranked, records)
         ]
         confidence = hits[0].score if hits else 0.0
-        return RetrievalResult(hits=hits, confidence=confidence, timings_ms=timings)
+        return RetrievalResult(
+            hits=hits,
+            confidence=confidence,
+            strategy_top_scores=top_scores,
+            timings_ms=timings,
+        )

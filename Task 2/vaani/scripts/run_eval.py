@@ -53,7 +53,7 @@ def main() -> None:
     ap.add_argument("--hindi", action="store_true", help="query with hindi text instead of english")
     ap.add_argument("--strategies", default=None, help="comma list, default all built")
     ap.add_argument("--k", type=int, default=10)
-    ap.add_argument("--abstain-threshold", type=float, default=0.25)
+    ap.add_argument("--abstain-threshold", type=float, default=0.85)
     args = ap.parse_args()
 
     corpus = Path(args.corpus)
