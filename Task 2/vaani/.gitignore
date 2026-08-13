@@ -1,0 +1,26 @@
+# python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# local data, models and indexes (rebuilt from scripts, never committed)
+data/
+models/
+indexes/
+*.onnx
+*.gguf
+*.faiss
+*.parquet
+*.arrow
+
+# secrets
+.env
+.env.*
+
+# misc
+.DS_Store
+*.log
+node_modules/
