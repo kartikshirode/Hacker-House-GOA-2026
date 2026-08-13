@@ -1,0 +1,7 @@
+# secrets, never committed
+.env*
+
+# os junk
+.DS_Store
+Thumbs.db
+desktop.ini
