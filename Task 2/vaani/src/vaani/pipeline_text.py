@@ -1,0 +1,89 @@
+"""Assemble the text-query pipeline: guard, embed, retrieve, answer.
+
+Voice arrives in phase B as a stage in front of this pipeline; nothing
+downstream changes.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic import BaseModel
+
+from vaani import answer_extractive, guards
+from vaani.embed import DEFAULT_MODEL, Embedder
+from vaani.harness import Pipeline, Refusal, Stage
+from vaani.retriever import Retriever
+from vaani.store import PassageStore
+from vaani.strategies import load_strategies
+
+
+class PipelineConfig(BaseModel):
+    corpus_dir: str
+    index_root: str
+    k: int = 10
+    abstain_threshold: float = 0.25
+    strategies: list[str] | None = None
+    model: str = DEFAULT_MODEL
+    device: str | None = None
+
+
+class Runtime:
+    """Loaded-once resources shared across requests."""
+
+    def __init__(self, cfg: PipelineConfig):
+        self.cfg = cfg
+        self.embedder = Embedder(cfg.model, device=cfg.device)
+        self.store = PassageStore.load(Path(cfg.corpus_dir))
+        self.retriever = Retriever(load_strategies(Path(cfg.index_root)), self.store)
+        # first encode pays model warmup; do it here, not on a request
+        self.embedder.encode_queries(["warmup"])
+
+
+def build_text_pipeline(runtime: Runtime) -> Pipeline:
+    cfg = runtime.cfg
+
+    def guard_input(ctx):
+        verdict = guards.check_input(ctx["query"])
+        if not verdict.allowed:
+            return Refusal(reason_code="unsafe_input", message=verdict.reason)
+        return {"guard_input": verdict}
+
+    def embed_query(ctx):
+        vec = runtime.embedder.encode_queries([ctx["query"]])[0]
+        return {"query_vec": vec}
+
+    def retrieve(ctx):
+        result = runtime.retriever.retrieve(
+            ctx["query"], ctx["query_vec"], k=cfg.k, strategies=cfg.strategies
+        )
+        return {"retrieval": result}
+
+    def abstain_gate(ctx):
+        r = ctx["retrieval"]
+        if not r.hits or r.confidence < cfg.abstain_threshold:
+            return Refusal(
+                reason_code="low_confidence",
+                message=f"confidence={r.confidence:.3f} below {cfg.abstain_threshold}",
+            )
+        return {}
+
+    def answer(ctx):
+        return {"answer": answer_extractive.answer(ctx["retrieval"].hits, ctx["query"])}
+
+    def guard_output(ctx):
+        payload = ctx["answer"]
+        context = [h.eng_text for h in ctx["retrieval"].hits[:3]]
+        verdict = guards.check_output(payload.text, context)
+        if not verdict.allowed:
+            return Refusal(reason_code="ungrounded_answer", message=verdict.reason)
+        return {}
+
+    return Pipeline([
+        Stage("guard_input", guard_input),
+        Stage("embed_query", embed_query, timeout_ms=50),
+        Stage("retrieve", retrieve, timeout_ms=60),
+        Stage("abstain_gate", abstain_gate),
+        Stage("answer", answer, timeout_ms=40),
+        Stage("guard_output", guard_output, timeout_ms=40),
+    ])
