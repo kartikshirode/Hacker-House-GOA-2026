@@ -1,0 +1,363 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: "Imbue";
+  src: url("/fonts/imbue-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Victor Mono";
+  src: url("/fonts/victor-mono-latin.woff2") format("woff2");
+  font-weight: 100 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Noto Sans Devanagari";
+  src: url("/fonts/noto-devanagari.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+
+:root {
+  --hh-green: #0b6839;
+  --hh-green-deep: #07472a;
+  --hh-yellow: #fee101;
+  --hh-cream: #fffbe8;
+  --hh-pink: #ff0080;
+  --hh-red: #e40014;
+  --hh-ink: #0e0e0e;
+  --paper-shadow: #06331f;
+}
+
+@theme inline {
+  --color-hh-green: var(--hh-green);
+  --color-hh-green-deep: var(--hh-green-deep);
+  --color-hh-yellow: var(--hh-yellow);
+  --color-hh-cream: var(--hh-cream);
+  --color-hh-pink: var(--hh-pink);
+  --color-hh-red: var(--hh-red);
+  --color-hh-ink: var(--hh-ink);
+  --font-display: "Imbue", Georgia, serif;
+  --font-mono: "Victor Mono", ui-monospace, monospace;
+}
+
+body {
+  background: var(--hh-green-deep);
+  color: var(--hh-cream);
+  font-family: var(--font-mono);
+  /* decorative stickers overhang the sheet edge; never a horizontal scrollbar */
+  overflow-x: clip;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* paper grain via inline SVG turbulence, overlaid on any .grain element */
+.grain {
+  position: relative;
+}
+.grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.05;
+  mix-blend-mode: multiply;
+}
+.grain-light::after {
+  mix-blend-mode: screen;
+  opacity: 0.04;
+}
+
+/* sticker chips: tilted print-shop labels replacing the old ticker strips */
+.chip {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  border: 2px solid var(--hh-green-deep);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.3);
+  white-space: nowrap;
+}
+.chip-yellow {
+  background: var(--hh-yellow);
+  color: var(--hh-green-deep);
+  transform: rotate(-2deg);
+}
+.chip-cream {
+  background: var(--hh-cream);
+  color: var(--hh-green-deep);
+  transform: rotate(1.6deg);
+}
+.chip-pink {
+  background: var(--hh-pink);
+  color: var(--hh-cream);
+  transform: rotate(-1.2deg);
+}
+
+/* rotating sticker badge riding the press sheet corner */
+.spin-badge {
+  animation: spin-slow 28s linear infinite;
+  /* spin around the viewBox center, not the text ring's own bounding box */
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* masthead sticker */
+.sticker {
+  transform: rotate(-7deg);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.25);
+}
+
+/* press sheet: cream panel with crop marks */
+.press-sheet {
+  background: var(--hh-cream);
+  color: var(--hh-green-deep);
+  border-radius: 14px;
+  box-shadow:
+    0 2px 0 rgba(0, 0, 0, 0.25),
+    0 24px 60px rgba(0, 0, 0, 0.35);
+}
+.crop {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  pointer-events: none;
+  opacity: 0.55;
+}
+.crop::before,
+.crop::after {
+  content: "";
+  position: absolute;
+  background: var(--hh-green-deep);
+}
+.crop::before {
+  width: 100%;
+  height: 2px;
+  top: 50%;
+}
+.crop::after {
+  height: 100%;
+  width: 2px;
+  left: 50%;
+}
+
+/* hard-shadow print buttons */
+.btn {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  border: 2.5px solid var(--hh-green-deep);
+  border-radius: 999px;
+  padding: 0.72rem 1.35rem;
+  box-shadow: 4px 4px 0 var(--hh-green-deep);
+  transition: transform 90ms ease, box-shadow 90ms ease;
+  cursor: pointer;
+}
+.btn:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 var(--hh-green-deep);
+}
+.btn:active:not(:disabled) {
+  transform: translate(3px, 3px);
+  box-shadow: 1px 1px 0 var(--hh-green-deep);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn:focus-visible {
+  outline: 3px solid var(--hh-pink);
+  outline-offset: 2px;
+}
+.btn-primary {
+  background: var(--hh-yellow);
+  color: var(--hh-green-deep);
+}
+.btn-pink {
+  background: var(--hh-pink);
+  color: var(--hh-cream);
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--hh-green-deep);
+}
+
+/* ticket-stub format tabs */
+.stub {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.82rem;
+  letter-spacing: 0.06em;
+  border: 2px dashed var(--hh-green);
+  border-radius: 8px;
+  padding: 0.5rem 0.95rem;
+  color: var(--hh-green-deep);
+  background: transparent;
+  cursor: pointer;
+  transition: transform 90ms ease;
+}
+.stub:hover {
+  transform: translateY(-1px);
+}
+.stub:focus-visible {
+  outline: 3px solid var(--hh-pink);
+  outline-offset: 2px;
+}
+.stub-active {
+  background: var(--hh-green);
+  border-style: solid;
+  color: var(--hh-cream);
+  box-shadow: 3px 3px 0 var(--hh-green-deep);
+}
+
+/* print-job form fields */
+.field-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.28em;
+  color: var(--hh-green);
+  text-transform: uppercase;
+  display: block;
+  margin-bottom: 0.3rem;
+}
+.field {
+  width: 100%;
+  background: #fffef6;
+  border: 2px solid var(--hh-green);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  color: var(--hh-green-deep);
+}
+.field::placeholder {
+  color: color-mix(in srgb, var(--hh-green) 45%, transparent);
+}
+.field:focus {
+  outline: none;
+  border-color: var(--hh-pink);
+  box-shadow: 3px 3px 0 color-mix(in srgb, var(--hh-pink) 35%, transparent);
+}
+
+/* press bed: where the pass preview sits */
+.press-bed {
+  background: var(--hh-green-deep);
+  border-radius: 12px;
+  position: relative;
+}
+.reg-mark {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--hh-cream);
+  border-radius: 999px;
+  opacity: 0.5;
+  pointer-events: none;
+}
+.reg-mark::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  background: var(--hh-cream);
+  border-radius: 999px;
+}
+
+/* 3D tilt wrapper: JS sets --rx/--ry (deg) and --gx/--gy (percent) */
+.tilt {
+  transform: perspective(1000px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  transition: transform 260ms ease-out;
+  will-change: transform;
+}
+
+/* holo foil: shine follows the same tilt input */
+.holo {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background:
+    radial-gradient(
+      circle at var(--gx, 50%) var(--gy, 50%),
+      rgba(255, 255, 255, 0.35) 0%,
+      rgba(255, 255, 255, 0) 32%
+    ),
+    linear-gradient(
+      115deg,
+      rgba(255, 0, 128, 0) 24%,
+      rgba(255, 0, 128, 0.09) 38%,
+      rgba(254, 225, 1, 0.1) 47%,
+      rgba(11, 104, 57, 0.08) 56%,
+      rgba(255, 0, 128, 0) 72%
+    );
+  mix-blend-mode: overlay;
+  opacity: 0.55;
+}
+
+/* the pass "prints" out of the slot when a photo lands */
+.print-anim {
+  animation: print-in 620ms cubic-bezier(0.2, 0.8, 0.25, 1);
+}
+@keyframes print-in {
+  0% {
+    clip-path: inset(0 0 96% 0);
+  }
+  100% {
+    clip-path: inset(0 0 0 0);
+  }
+}
+.print-head {
+  position: absolute;
+  left: -2%;
+  right: -2%;
+  height: 5px;
+  background: var(--hh-yellow);
+  box-shadow: 0 0 14px rgba(254, 225, 1, 0.9);
+  animation: head-sweep 620ms cubic-bezier(0.2, 0.8, 0.25, 1) forwards;
+  pointer-events: none;
+  z-index: 5;
+}
+@keyframes head-sweep {
+  0% {
+    top: 3%;
+    opacity: 1;
+  }
+  92% {
+    opacity: 1;
+  }
+  100% {
+    top: 100%;
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin-badge {
+    animation: none;
+  }
+  .print-anim,
+  .print-head {
+    animation: none;
+  }
+  .print-head {
+    display: none;
+  }
+  .tilt {
+    transform: none !important;
+  }
+}
