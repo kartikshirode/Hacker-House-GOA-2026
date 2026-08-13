@@ -19,6 +19,7 @@ indexes/
 # secrets
 .env
 .env.*
+!.env.example
 
 # misc
 .DS_Store
