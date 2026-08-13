@@ -11,9 +11,11 @@ dependencies = [
     "pandas>=3.0.5",
     "pyarrow>=25.0.1",
     "pydantic>=2.13.4",
+    "python-dotenv>=1.2.2",
     "sentence-transformers>=5.7.0",
     "torch>=2.7",
     "usearch>=2.26.0",
+    "websockets>=17.0.1",
 ]
 
 [dependency-groups]
