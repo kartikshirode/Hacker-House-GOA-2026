@@ -25,3 +25,5 @@ indexes/
 .DS_Store
 *.log
 node_modules/
+tools/
+models/
