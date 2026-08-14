@@ -229,6 +229,9 @@ const css = name => getComputedStyle(document.documentElement).getPropertyValue(
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 let recorder = null, chunks = [], audioCtx = null, analyser = null, rafId = null;
+let wsMode = true;   // streaming first; drops to clip mode if the server declines
+let session = null;  // live streaming session, null otherwise
+let streamBuf = "";
 
 // ---- live voice bars ------------------------------------------------
 function drawVoiceBars() {
@@ -328,34 +331,172 @@ async function post(url, body, isForm) {
   }
 }
 
+// ---- streaming voice over the websocket -----------------------------
+// mic audio runs through an AudioWorklet, gets resampled to mono 16kHz
+// PCM16 and streams to /ws/voice; partials, tokens and the result come
+// back as JSON events. Tokens are provisional: the result event is the
+// authoritative answer and replaces whatever was typed out.
+const WORKLET_SRC = `
+class PCMForwarder extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = []; this.len = 0; }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (ch) {
+      this.buf.push(new Float32Array(ch));
+      this.len += ch.length;
+      if (this.len >= 4096) {
+        const all = new Float32Array(this.len);
+        let o = 0;
+        for (const b of this.buf) { all.set(b, o); o += b.length; }
+        this.buf = []; this.len = 0;
+        this.port.postMessage(all, [all.buffer]);
+      }
+    }
+    return true;
+  }
+}
+registerProcessor("pcm-forwarder", PCMForwarder);
+`;
+
+function toPCM16(float32, fromRate) {
+  const ratio = fromRate / 16000;
+  const n = Math.floor(float32.length / ratio);
+  const out = new Int16Array(n);
+  for (let i = 0; i < n; i++) {
+    const idx = i * ratio;
+    const lo = Math.floor(idx);
+    const hi = Math.min(lo + 1, float32.length - 1);
+    const s = float32[lo] + (float32[hi] - float32[lo]) * (idx - lo);
+    out[i] = Math.max(-1, Math.min(1, s)) * 0x7fff;
+  }
+  return out;
+}
+
+function showToken(delta) {
+  streamBuf += delta;
+  card.classList.add("visible");
+  card.classList.remove("refused");
+  eyebrow.textContent = "answer · live";
+  answerText.textContent = streamBuf;
+}
+
+async function startStreaming(stream, onUnavailable) {
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${scheme}://${location.host}/ws/voice`);
+  ws.binaryType = "arraybuffer";
+  await new Promise((ok, no) => { ws.onopen = ok; ws.onerror = no; });
+
+  const workletUrl = URL.createObjectURL(new Blob([WORKLET_SRC], { type: "text/javascript" }));
+  await audioCtx.audioWorklet.addModule(workletUrl);
+  const node = new AudioWorkletNode(audioCtx, "pcm-forwarder");
+  const sampleRate = audioCtx.sampleRate;
+  node.port.onmessage = e => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(toPCM16(e.data, sampleRate).buffer);
+  };
+  audioCtx.createMediaStreamSource(stream).connect(node);
+
+  streamBuf = "";
+  let gotResult = false;
+  let stopped = false;
+
+  const finish = () => {
+    node.disconnect();
+    stream.getTracks().forEach(t => t.stop());
+    audioCtx.close();
+    mic.classList.remove("recording");
+    cancelAnimationFrame(rafId);
+  };
+
+  ws.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === "partial") {
+      transcriptEl.textContent = msg.text;
+      transcriptEl.classList.add("partial");
+    } else if (msg.type === "transcript") {
+      transcriptEl.textContent = msg.text;
+      transcriptEl.classList.remove("partial");
+      hint.textContent = "thinking…";
+    } else if (msg.type === "token") {
+      showToken(msg.text);
+    } else if (msg.type === "result") {
+      gotResult = true;
+      streamBuf = "";
+      render(msg);
+      hint.textContent = "Tap the mic to ask another";
+      ws.close();
+      session = null;
+    } else if (msg.type === "error") {
+      wsMode = false;
+      if (!stopped) finish();
+      ws.close();
+      session = null;
+      onUnavailable();
+    }
+  };
+  ws.onclose = () => {
+    if (!gotResult && wsMode && stopped) hint.textContent = "Tap the mic to try again";
+  };
+
+  return {
+    stop() {
+      stopped = true;
+      finish();
+      hint.textContent = "waiting for the answer…";
+      // keep the socket: the final transcript and result are still coming
+      setTimeout(() => { if (!gotResult) { ws.close(); session = null; } }, 8000);
+    },
+  };
+}
+
+// ---- clip fallback: record webm, post the finished clip -------------
+function startClip(stream) {
+  chunks = [];
+  recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+  recorder.ondataavailable = e => chunks.push(e.data);
+  recorder.onstop = () => {
+    stream.getTracks().forEach(t => t.stop());
+    audioCtx.close();
+    mic.classList.remove("recording");
+    cancelAnimationFrame(rafId);
+    const blob = new Blob(chunks, { type: "audio/webm" });
+    const form = new FormData();
+    form.append("file", blob, "question.webm");
+    transcriptEl.textContent = "…";
+    transcriptEl.classList.add("partial");
+    post("/api/voice", form, true);
+  };
+  recorder.start();
+}
+
 // ---- mic flow -------------------------------------------------------
+async function startCapture() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  audioCtx = new AudioContext();
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 256;
+  audioCtx.createMediaStreamSource(stream).connect(analyser);
+  mic.classList.add("recording");
+  hint.textContent = "Listening… tap again when done";
+  if (!reduceMotion) drawVoiceBars();
+
+  if (wsMode && window.AudioWorkletNode) {
+    try {
+      // if the server has no realtime stt it answers instantly, before
+      // any speech, so redoing the capture in clip mode goes unnoticed
+      session = await startStreaming(stream, () => { startCapture().catch(() => {}); });
+      return;
+    } catch {
+      wsMode = false;
+    }
+  }
+  startClip(stream);
+}
+
 mic.addEventListener("click", async () => {
+  if (session) { session.stop(); return; }
   if (recorder && recorder.state === "recording") { recorder.stop(); return; }
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioCtx = new AudioContext();
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 256;
-    audioCtx.createMediaStreamSource(stream).connect(analyser);
-    chunks = [];
-    recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
-    recorder.ondataavailable = e => chunks.push(e.data);
-    recorder.onstop = () => {
-      stream.getTracks().forEach(t => t.stop());
-      audioCtx.close();
-      mic.classList.remove("recording");
-      cancelAnimationFrame(rafId);
-      const blob = new Blob(chunks, { type: "audio/webm" });
-      const form = new FormData();
-      form.append("file", blob, "question.webm");
-      transcriptEl.textContent = "…";
-      transcriptEl.classList.add("partial");
-      post("/api/voice", form, true);
-    };
-    recorder.start();
-    mic.classList.add("recording");
-    hint.textContent = "Listening… tap again when done";
-    if (!reduceMotion) drawVoiceBars();
+    await startCapture();
   } catch {
     hint.textContent = "Microphone permission needed; or use the text box below";
   }

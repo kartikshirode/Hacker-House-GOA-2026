@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from vaani import answer_extractive, answer_generative
 from vaani.answer_generative import GenerationClient
-from vaani.guards import GuardClient
+from vaani.guards import GuardClient, GuardVerdict
 from vaani.embed import DEFAULT_MODEL, Embedder
 from vaani.harness import Pipeline, Refusal, Stage
 from vaani.retriever import Retriever
@@ -61,8 +61,25 @@ class Runtime:
         )
         # input guard overlaps with embed + retrieve on this pool
         self.guard_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="guard")
-        # first encode pays model warmup; do it here, not on a request
-        self.embedder.encode_queries(["warmup"])
+        self._warmup()
+
+    def _warmup(self):
+        """First calls pay model and JIT warmup; pay them at boot, not on
+        a request. Each component gets hit on purpose: one pipeline pass
+        could stop at the abstain gate and warm nothing behind it."""
+        vec = self.embedder.encode_queries(["warmup"])[0]
+        try:
+            self.retriever.retrieve("warmup", vec, k=3, strategies=self.cfg.strategies)
+        except Exception:  # noqa: BLE001 warmup must never block boot
+            pass
+        if self.genclient is not None:
+            try:
+                self.genclient.chat("Reply with the word ok.", "warmup", max_tokens=4)
+            except Exception:  # noqa: BLE001
+                pass
+        if self.cfg.guard_url:
+            self.guards.check_input("warmup")
+            self.guards.check_output("warmup", ["warmup"])
 
     def speculative_retrieve(self, query: str) -> dict:
         """Embed + retrieve for a partial transcript, shaped so the result
@@ -123,7 +140,8 @@ def build_text_pipeline(runtime: Runtime) -> Pipeline:
 
     def generative(ctx):
         result = answer_generative.answer(
-            runtime.genclient, ctx["retrieval"].hits, ctx["query"]
+            runtime.genclient, ctx["retrieval"].hits, ctx["query"],
+            on_token=ctx.get("on_token"),
         )
         if isinstance(result, Refusal):
             return result
@@ -144,6 +162,12 @@ def build_text_pipeline(runtime: Runtime) -> Pipeline:
         payload = ctx["answer"]
         if payload.kind == "extractive":
             # verbatim corpus text is grounded by construction
+            return {}
+        if payload.language and payload.language != "en":
+            # HHEM-2.1-Open only reads English; scoring Hindi against
+            # English passages returns noise, so the gate steps aside
+            # and the trace shows the answer went unchecked
+            ctx["guard_output"] = GuardVerdict(allowed=True, reason="hhem_english_only")
             return {}
         context = [h.eng_text for h in ctx["retrieval"].hits[:3]]
         verdict = runtime.guards.check_output(payload.text, context)

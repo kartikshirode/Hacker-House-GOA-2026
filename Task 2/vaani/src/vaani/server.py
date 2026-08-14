@@ -28,6 +28,12 @@ WEB_DIR = Path(__file__).resolve().parents[2] / "web"
 SPECULATE_MIN_CHARS = 6
 
 
+def _norm_transcript(text: str) -> str:
+    """Sarvam finals often differ from the last partial only in case or
+    trailing punctuation; matching on this keeps the speculative work."""
+    return text.strip().lower().rstrip("?!.,।")
+
+
 class AskRequest(BaseModel):
     query: str
 
@@ -79,7 +85,10 @@ def create_app(run_pipeline, stt, speculate=None, stt_session_factory=None) -> F
 
         loop = asyncio.get_event_loop()
         session = stt_session_factory()
-        spec: dict[str, asyncio.Future] = {}
+        # one slot, newest partial only: partials arrive faster than they
+        # differ, and only the last one can match the final transcript
+        spec_norm: str | None = None
+        spec_future: asyncio.Future | None = None
 
         async def pump_audio():
             try:
@@ -95,24 +104,40 @@ def create_app(run_pipeline, stt, speculate=None, stt_session_factory=None) -> F
                 async for event in session.events():
                     if event.kind == "partial" and event.text:
                         await ws.send_json({"type": "partial", "text": event.text})
+                        norm = _norm_transcript(event.text)
                         if (speculate is not None
                                 and len(event.text) >= SPECULATE_MIN_CHARS
-                                and event.text not in spec):
-                            spec[event.text] = loop.run_in_executor(
+                                and norm != spec_norm):
+                            spec_norm = norm
+                            spec_future = loop.run_in_executor(
                                 None, speculate, event.text
                             )
                     elif event.kind == "final" and event.text:
                         await ws.send_json({"type": "transcript", "text": event.text})
                         ctx = {"query": event.text}
-                        future = spec.get(event.text)
-                        if future is not None:
+                        if (spec_future is not None
+                                and spec_norm == _norm_transcript(event.text)):
                             try:
-                                ctx.update(await asyncio.wait_for(future, timeout=0.2))
+                                ctx.update(await asyncio.wait_for(spec_future, timeout=0.2))
                                 ctx["speculative"] = True
                             except Exception:  # noqa: BLE001 fresh retrieval instead
                                 pass
-                        spec.clear()
+                        spec_norm, spec_future = None, None
+
+                        # generation streams deltas from a worker thread;
+                        # forward them until the pipeline returns, then the
+                        # result event below is the authoritative answer
+                        live = {"on": True}
+
+                        def on_token(delta: str, _live=live):
+                            if _live["on"]:
+                                asyncio.run_coroutine_threadsafe(
+                                    ws.send_json({"type": "token", "text": delta}), loop
+                                )
+
+                        ctx["on_token"] = on_token
                         result = await loop.run_in_executor(None, run_pipeline, ctx)
+                        live["on"] = False
                         payload = _result_json(result)
                         payload["type"] = "result"
                         payload["transcript"] = event.text

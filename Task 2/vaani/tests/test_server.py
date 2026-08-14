@@ -132,3 +132,21 @@ def test_ws_voice_without_factory_reports_unconfigured():
     with client.websocket_connect("/ws/voice") as ws:
         msg = ws.receive_json()
     assert msg["type"] == "error"
+
+
+def test_ws_voice_forwards_generation_tokens():
+    def run_pipeline(ctx):
+        # a streaming generation stage calls the sink from a worker thread
+        ctx["on_token"]("a corporation ")
+        ctx["on_token"]("is a legal entity")
+        return fake_result(AnswerPayload(text="a corporation is a legal entity"))
+
+    app = create_app(run_pipeline, FakeSTT(), stt_session_factory=FakeSession)
+    client = TestClient(app)
+    with client.websocket_connect("/ws/voice") as ws:
+        msgs = [ws.receive_json() for _ in range(6)]
+
+    types = [m["type"] for m in msgs]
+    assert types == ["partial", "partial", "transcript", "token", "token", "result"]
+    assert msgs[3]["text"] + msgs[4]["text"] == "a corporation is a legal entity"
+    assert msgs[5]["answer"]["text"] == "a corporation is a legal entity"
