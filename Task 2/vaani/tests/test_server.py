@@ -22,9 +22,9 @@ class FakeSTT:
         return TranscriptResult(text=self.text, language_code="en-IN", mock=True)
 
 
-def make_client(answer=None, stt=None):
+def make_client(answer=None, stt=None, **kwargs):
     answer = answer or AnswerPayload(text="a corporation is a legal entity", passage_ids=["abc123"])
-    app = create_app(lambda q: fake_result(answer), stt or FakeSTT())
+    app = create_app(lambda ctx: fake_result(answer), stt or FakeSTT(), **kwargs)
     return TestClient(app)
 
 
@@ -58,7 +58,7 @@ def test_voice_prepends_stt_stage_and_transcript():
 
 
 def test_voice_empty_transcript_refuses_without_pipeline():
-    def never_called(q):
+    def never_called(ctx):
         raise AssertionError("pipeline ran on an empty transcript")
 
     app = create_app(never_called, FakeSTT(text=""))
@@ -72,3 +72,63 @@ def test_voice_empty_transcript_refuses_without_pipeline():
 
 def test_health():
     assert make_client().get("/healthz").json() == {"ok": True}
+
+
+class FakeSession:
+    """Scripted realtime STT session: two partials, then a final."""
+
+    def __init__(self):
+        from vaani.stt_realtime import SpeechEvent
+
+        self.received = []
+        self._events = [
+            SpeechEvent(kind="partial", text="what is"),
+            SpeechEvent(kind="partial", text="what is a corporation"),
+            SpeechEvent(kind="speech_end"),
+            SpeechEvent(kind="final", text="what is a corporation"),
+        ]
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        pass
+
+    async def send_audio(self, frame):
+        self.received.append(frame)
+
+    async def events(self):
+        for event in self._events:
+            yield event
+
+
+def test_ws_voice_streams_partials_then_result():
+    speculated = []
+
+    def speculate(text):
+        speculated.append(text)
+        return {"speculative_marker": text}
+
+    client = make_client(speculate=speculate, stt_session_factory=FakeSession)
+    with client.websocket_connect("/ws/voice") as ws:
+        ws.send_bytes(b"\x00\x01" * 160)
+        first = ws.receive_json()
+        second = ws.receive_json()
+        transcript = ws.receive_json()
+        result = ws.receive_json()
+
+    assert first == {"type": "partial", "text": "what is"}
+    assert second["text"] == "what is a corporation"
+    assert transcript["type"] == "transcript"
+    assert result["type"] == "result"
+    assert result["speculative"] is True
+    assert result["answer"]["text"].startswith("a corporation")
+    # both partials fired speculative retrieval
+    assert speculated == ["what is", "what is a corporation"]
+
+
+def test_ws_voice_without_factory_reports_unconfigured():
+    client = make_client()
+    with client.websocket_connect("/ws/voice") as ws:
+        msg = ws.receive_json()
+    assert msg["type"] == "error"

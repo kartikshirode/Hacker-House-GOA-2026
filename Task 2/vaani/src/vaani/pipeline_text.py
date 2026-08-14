@@ -64,6 +64,15 @@ class Runtime:
         # first encode pays model warmup; do it here, not on a request
         self.embedder.encode_queries(["warmup"])
 
+    def speculative_retrieve(self, query: str) -> dict:
+        """Embed + retrieve for a partial transcript, shaped so the result
+        can be injected straight into a pipeline run context."""
+        vec = self.embedder.encode_queries([query])[0]
+        result = self.retriever.retrieve(
+            query, vec, k=self.cfg.k, strategies=self.cfg.strategies
+        )
+        return {"query_vec": vec, "retrieval": result}
+
 
 def build_text_pipeline(runtime: Runtime) -> Pipeline:
     cfg = runtime.cfg
@@ -79,10 +88,14 @@ def build_text_pipeline(runtime: Runtime) -> Pipeline:
         )}
 
     def embed_query(ctx):
+        if "query_vec" in ctx:  # speculative path already embedded this
+            return {}
         vec = runtime.embedder.encode_queries([ctx["query"]])[0]
         return {"query_vec": vec}
 
     def retrieve(ctx):
+        if "retrieval" in ctx:  # speculative path already retrieved
+            return {}
         result = runtime.retriever.retrieve(
             ctx["query"], ctx["query_vec"], k=cfg.k, strategies=cfg.strategies
         )
