@@ -8,6 +8,7 @@ what lives underneath.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -52,7 +53,12 @@ class LexicalStrategy:
 
 
 def load_strategies(index_root: Path | str) -> dict:
-    """Load every built strategy directory under index_root."""
+    """Load every built strategy directory under index_root.
+
+    A strategy that fails to load is skipped with a loud log instead of
+    taking the whole runtime down; usearch on Windows chokes on restore
+    for files over 2GB, and one broken index should not sink the rest.
+    """
     index_root = Path(index_root)
     out: dict = {}
     for d in sorted(index_root.iterdir()):
@@ -61,11 +67,17 @@ def load_strategies(index_root: Path | str) -> dict:
             continue
         meta = json.loads(meta_file.read_text(encoding="utf-8"))
         kind = meta["strategy"]
-        if kind == "passage":
-            out["passage_dense"] = PassageDenseStrategy(DenseIndex.load(d))
-            if (d / LexicalIndex.SUBDIR).exists():
-                out["bm25_eng"] = LexicalStrategy(LexicalIndex.load(d))
-        elif kind == "sentence":
-            parents = np.load(d / "parents.npy")
-            out["sentence_dense"] = SentenceDenseStrategy(DenseIndex.load(d), parents)
+        try:
+            if kind == "passage":
+                out["passage_dense"] = PassageDenseStrategy(DenseIndex.load(d))
+                if (d / LexicalIndex.SUBDIR).exists():
+                    out["bm25_eng"] = LexicalStrategy(LexicalIndex.load(d))
+            elif kind == "sentence":
+                parents = np.load(d / "parents.npy")
+                out["sentence_dense"] = SentenceDenseStrategy(DenseIndex.load(d), parents)
+        except Exception as exc:  # noqa: BLE001
+            print(f"strategy {kind} at {d} failed to load, skipping: {exc}",
+                  file=sys.stderr)
+    if not out:
+        raise RuntimeError(f"no strategy loaded from {index_root}")
     return out
