@@ -93,11 +93,17 @@ class RealtimeSTT:
         api_key: str | None = None,
         language: str = "auto",
         stream_type: str = "fast",
+        mode: str = "translate",
         url: str = REALTIME_URL,
     ):
         self.api_key = api_key if api_key is not None else os.environ.get("SARVAM_API_KEY", "")
         self.language = language
         self.stream_type = stream_type
+        # translate mode is load-bearing: it turns hindi speech into
+        # english text, which is the path the english-only guards and the
+        # english indexes are built for. The paid session check must
+        # confirm hindi speech actually comes back as english.
+        self.mode = mode
         self.url = url
         self._ws = None
 
@@ -108,8 +114,8 @@ class RealtimeSTT:
             raise RuntimeError("SARVAM_API_KEY is not set")
         query = (
             f"?model={MODEL}&language-code={self.language}"
-            f"&stream-type={self.stream_type}&input-audio-codec=linear16"
-            f"&input-audio-rate=16000"
+            f"&stream-type={self.stream_type}&mode={self.mode}"
+            f"&input-audio-codec=linear16&input-audio-rate=16000"
         )
         self._ws = await websockets.connect(
             self.url + query,
