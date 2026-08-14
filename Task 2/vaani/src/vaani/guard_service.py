@@ -65,9 +65,16 @@ class GroundingCheck(BaseModel):
     contexts: list[str]
 
 
+@app.on_event("startup")
+def warm_models():
+    # lazy first-request loading costs tens of seconds; pay it at boot
+    _injection_pipe()("warmup query")
+    _hhem().predict([("warmup context", "warmup answer")])
+
+
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "device": _device()}
+    return {"ok": True, "device": _device(), "warm": bool(_models)}
 
 
 @app.post("/classify_input")

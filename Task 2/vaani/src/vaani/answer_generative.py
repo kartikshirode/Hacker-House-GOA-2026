@@ -47,13 +47,16 @@ class GenerationClient:
         base_url: str = "http://127.0.0.1:8001/v1",
         model: str = "Qwen/Qwen3-1.7B",
         timeout_s: float = 2.0,
-        max_tokens: int = 60,
+        max_tokens: int = 48,
         client: httpx.Client | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.max_tokens = max_tokens
         self.client = client or httpx.Client(timeout=timeout_s)
+        if self.model == "auto":
+            served = self.client.get(f"{self.base_url}/models").json()
+            self.model = served["data"][0]["id"]
 
     def chat(self, system: str, user: str) -> str:
         response = self.client.post(
@@ -66,6 +69,7 @@ class GenerationClient:
                 ],
                 "max_tokens": self.max_tokens,
                 "temperature": 0.0,
+                "stop": ["\n"],
                 "chat_template_kwargs": {"enable_thinking": False},
             },
         )

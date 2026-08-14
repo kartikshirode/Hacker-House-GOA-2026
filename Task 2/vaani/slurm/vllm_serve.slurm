@@ -32,7 +32,7 @@ PYTHONPATH=src VAANI_GUARD_DEVICE=cuda HF_HUB_OFFLINE=1 \
   ~/vllm-env/bin/python -m uvicorn vaani.guard_service:app \
   --host 0.0.0.0 --port 8002 > slurm/guards-$SLURM_JOB_ID.log 2>&1 &
 
-exec ~/vllm-env/bin/vllm serve Qwen/Qwen3-1.7B \
+exec ~/vllm-env/bin/vllm serve "${VAANI_LLM:-Qwen/Qwen3-1.7B}" \
   --host 0.0.0.0 --port 8001 \
   --max-model-len 2048 \
   --gpu-memory-utilization 0.75 \
