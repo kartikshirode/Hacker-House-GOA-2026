@@ -85,7 +85,18 @@ def main() -> None:
     answer_kinds: Counter[str] = Counter()
     refusal_reasons: Counter[str] = Counter()
     stage_outcomes: Counter[str] = Counter()
-    f1s: list[float] = []
+    fallback_causes: Counter[str] = Counter()
+    guard_unchecked: Counter[str] = Counter()
+    f1_all: list[float] = []
+    f1_generative: list[float] = []
+
+    def fallback_cause(detail: str) -> str:
+        # harness fallback detail reads "timeout: ..." or "error: Type: msg"
+        if detail.startswith("timeout"):
+            return "timeout"
+        if detail.startswith("error: "):
+            return detail.split(": ")[1] if ": " in detail[7:] else detail[7:]
+        return detail or "unknown"
 
     t_wall = time.perf_counter()
     for q in queries:
@@ -97,6 +108,12 @@ def main() -> None:
             stage_ms[e.stage].append(e.dur_ms)
             if e.outcome != "ok":
                 stage_outcomes[f"{e.stage}:{e.outcome}"] += 1
+            if e.stage == "answer" and e.outcome == "fallback":
+                fallback_causes[fallback_cause(e.detail)] += 1
+        for gate in ("guard_input", "guard_output"):
+            verdict = ctx.get(gate)
+            if verdict is not None and not verdict.checked:
+                guard_unchecked[f"{gate}:{verdict.reason}"] += 1
 
         gold = qrels.get(q["query_id"], set())
         refused = isinstance(result.answer, Refusal)
@@ -111,12 +128,18 @@ def main() -> None:
             mrrs.append(mrr)
             recalls.append(recall_at_k(ranked, gold, k=args.k))
             per_type[q["query_type"]].append(mrr)
+            ref = q["answer"] if args.hindi else q["eng_answer"]
+            # every answerable query scores: refusals as zero, fallbacks
+            # included, so failing more cannot inflate the number
             if refused:
                 refused_answerable += 1
-            else:
-                ref = q["answer"] if args.hindi else q["eng_answer"]
-                if result.answer.kind == "generative" and ref:
-                    f1s.append(token_f1(result.answer.text, ref))
+                if ref:
+                    f1_all.append(0.0)
+            elif ref:
+                score = token_f1(result.answer.text, ref)
+                f1_all.append(score)
+                if result.answer.kind == "generative":
+                    f1_generative.append(score)
         else:
             n_noanswer += 1
             if refused:
@@ -141,8 +164,12 @@ def main() -> None:
             "kinds": dict(answer_kinds),
             "refusal_reasons": dict(refusal_reasons),
             "stage_outcomes": dict(stage_outcomes),
-            "token_f1": round(sum(f1s) / len(f1s), 4) if f1s else None,
-            "n_f1_scored": len(f1s),
+            "fallback_causes": dict(fallback_causes),
+            "guard_unchecked": dict(guard_unchecked),
+            "token_f1_all_answerable": round(sum(f1_all) / len(f1_all), 4) if f1_all else None,
+            "n_f1_all": len(f1_all),
+            "token_f1_generative": round(sum(f1_generative) / len(f1_generative), 4) if f1_generative else None,
+            "n_f1_generative": len(f1_generative),
         },
         "retrieval": {
             "n_answerable": len(mrrs),
@@ -182,8 +209,13 @@ def main() -> None:
     print(f"answers {ans['kinds']}  refusals {ans['refusal_reasons']}")
     if ans["stage_outcomes"]:
         print(f"stage outcomes (non-ok): {ans['stage_outcomes']}")
-    if ans["token_f1"] is not None:
-        print(f"token F1 vs reference = {ans['token_f1']} on {ans['n_f1_scored']} generative answers")
+    if ans["fallback_causes"]:
+        print(f"answer fallback causes: {ans['fallback_causes']}")
+    if ans["guard_unchecked"]:
+        print(f"guard unchecked: {ans['guard_unchecked']}")
+    if ans["token_f1_all_answerable"] is not None:
+        print(f"token F1 all answerable = {ans['token_f1_all_answerable']} on {ans['n_f1_all']} "
+              f"(generative only = {ans['token_f1_generative']} on {ans['n_f1_generative']})")
     print(f"latency total ms: {l['total']}")
     for s, p in l["per_stage"].items():
         print(f"  {s:<14} {p}")
