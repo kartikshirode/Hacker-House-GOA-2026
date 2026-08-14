@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
@@ -38,7 +39,19 @@ class AskRequest(BaseModel):
     query: str
 
 
-def _result_json(result: PipelineResult, extra_stages: list[dict] | None = None) -> dict:
+def _guard_json(ctx: dict) -> dict:
+    """Expose guard verdicts, including checked=False fail-open paths,
+    so an unchecked answer is never presented as a graded one."""
+    out = {}
+    for key in ("guard_input", "guard_output"):
+        verdict = ctx.get(key)
+        if verdict is not None:
+            out[key.removeprefix("guard_")] = verdict.model_dump()
+    return out
+
+
+def _result_json(result: PipelineResult, extra_stages: list[dict] | None = None,
+                 guards: dict | None = None) -> dict:
     refused = isinstance(result.answer, Refusal)
     stages = [
         {"stage": e.stage, "ms": round(e.dur_ms, 2), "outcome": e.outcome, "detail": e.detail}
@@ -51,6 +64,7 @@ def _result_json(result: PipelineResult, extra_stages: list[dict] | None = None)
         "answer": None if refused else result.answer.model_dump(),
         "refusal": result.answer.model_dump() if refused else None,
         "trace": stages,
+        "guards": guards or {},
         "pipeline_ms": round(result.total_ms, 2),
         "total_ms": round(result.total_ms + sum(s["ms"] for s in (extra_stages or [])), 2),
         "request_id": result.request_id,
@@ -65,6 +79,10 @@ def create_app(run_pipeline, stt, speculate=None, stt_session_factory=None) -> F
     stt_session_factory: () -> async context manager with send_audio/events,
     enables the realtime websocket route."""
     app = FastAPI(title="vaani")
+    # speculation gets one dedicated worker: stale jobs queue here instead
+    # of competing with the pipeline for the default executor, and a
+    # queued-not-started job cancels cleanly when a newer partial lands
+    spec_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="spec")
 
     @app.get("/healthz")
     def healthz():
@@ -72,8 +90,9 @@ def create_app(run_pipeline, stt, speculate=None, stt_session_factory=None) -> F
 
     @app.post("/api/ask")
     def ask(body: AskRequest):
-        result = run_pipeline({"query": body.query})
-        return JSONResponse(_result_json(result))
+        ctx = {"query": body.query}
+        result = run_pipeline(ctx)
+        return JSONResponse(_result_json(result, guards=_guard_json(ctx)))
 
     @app.websocket("/ws/voice")
     async def ws_voice(ws: WebSocket):
@@ -88,7 +107,7 @@ def create_app(run_pipeline, stt, speculate=None, stt_session_factory=None) -> F
         # one slot, newest partial only: partials arrive faster than they
         # differ, and only the last one can match the final transcript
         spec_norm: str | None = None
-        spec_future: asyncio.Future | None = None
+        spec_future = None
 
         async def pump_audio():
             try:
@@ -108,17 +127,21 @@ def create_app(run_pipeline, stt, speculate=None, stt_session_factory=None) -> F
                         if (speculate is not None
                                 and len(event.text) >= SPECULATE_MIN_CHARS
                                 and norm != spec_norm):
+                            if spec_future is not None:
+                                spec_future.cancel()  # no-op once running
                             spec_norm = norm
-                            spec_future = loop.run_in_executor(
-                                None, speculate, event.text
-                            )
+                            spec_future = spec_pool.submit(speculate, event.text)
                     elif event.kind == "final" and event.text:
+                        t_final = time.perf_counter()
                         await ws.send_json({"type": "transcript", "text": event.text})
                         ctx = {"query": event.text}
                         if (spec_future is not None
                                 and spec_norm == _norm_transcript(event.text)):
                             try:
-                                ctx.update(await asyncio.wait_for(spec_future, timeout=0.2))
+                                # short bounded wait; either way the cost is
+                                # visible in transcript_to_result_ms below
+                                ctx.update(await asyncio.wait_for(
+                                    asyncio.wrap_future(spec_future), timeout=0.05))
                                 ctx["speculative"] = True
                             except Exception:  # noqa: BLE001 fresh retrieval instead
                                 pass
@@ -128,20 +151,32 @@ def create_app(run_pipeline, stt, speculate=None, stt_session_factory=None) -> F
                         # forward them until the pipeline returns, then the
                         # result event below is the authoritative answer
                         live = {"on": True}
+                        token_sends: list = []
 
-                        def on_token(delta: str, _live=live):
+                        def on_token(delta: str, _live=live, _sends=token_sends):
                             if _live["on"]:
-                                asyncio.run_coroutine_threadsafe(
+                                _sends.append(asyncio.run_coroutine_threadsafe(
                                     ws.send_json({"type": "token", "text": delta}), loop
-                                )
+                                ))
 
                         ctx["on_token"] = on_token
                         result = await loop.run_in_executor(None, run_pipeline, ctx)
                         live["on"] = False
-                        payload = _result_json(result)
+                        # drain pending token sends so none lands after the
+                        # authoritative result event
+                        for send in token_sends:
+                            try:
+                                await asyncio.wrap_future(send)
+                            except Exception:  # noqa: BLE001
+                                pass
+                        payload = _result_json(result, guards=_guard_json(ctx))
                         payload["type"] = "result"
                         payload["transcript"] = event.text
                         payload["speculative"] = ctx.get("speculative", False)
+                        # honest wall clock from final transcript to result,
+                        # including any speculative wait, not just stage time
+                        payload["transcript_to_result_ms"] = round(
+                            (time.perf_counter() - t_final) * 1000, 2)
                         await ws.send_json(payload)
                     elif event.kind == "error":
                         await ws.send_json({"type": "error", "message": event.raw_type})
@@ -153,10 +188,13 @@ def create_app(run_pipeline, stt, speculate=None, stt_session_factory=None) -> F
     @app.post("/api/voice")
     async def voice(file: UploadFile = File(...), language: str = "unknown"):
         audio = await file.read()
+        loop = asyncio.get_event_loop()
         t0 = time.perf_counter()
-        transcript = stt.transcribe_bytes(
+        # both calls block; keep them off the event loop so ws partials
+        # and other requests stay live while this one thinks
+        transcript = await loop.run_in_executor(None, lambda: stt.transcribe_bytes(
             audio, filename=file.filename or "clip.webm", language=language
-        )
+        ))
         stt_ms = (time.perf_counter() - t0) * 1000
         stt_stage = {
             "stage": "stt",
@@ -176,8 +214,9 @@ def create_app(run_pipeline, stt, speculate=None, stt_session_factory=None) -> F
                 "total_ms": round(stt_ms, 2),
                 "request_id": "",
             })
-        result = run_pipeline({"query": transcript.text})
-        payload = _result_json(result, extra_stages=[stt_stage])
+        ctx = {"query": transcript.text}
+        result = await loop.run_in_executor(None, run_pipeline, ctx)
+        payload = _result_json(result, extra_stages=[stt_stage], guards=_guard_json(ctx))
         payload["transcript"] = transcript.text
         payload["language_code"] = transcript.language_code
         return JSONResponse(payload)
