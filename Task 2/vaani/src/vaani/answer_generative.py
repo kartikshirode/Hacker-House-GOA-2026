@@ -80,6 +80,13 @@ def _held_back(acc: str) -> bool:
     return NO_ANSWER_TOKEN.startswith(head[: len(NO_ANSWER_TOKEN)])
 
 
+def _is_no_answer(text: str) -> bool:
+    """Refusal means the whole reply is the sentinel, give or take
+    punctuation. A sentinel buried mid-sentence is answer text; treating
+    it as refusal would retract tokens already streamed."""
+    return text.strip().strip(".!।,").strip() == NO_ANSWER_TOKEN
+
+
 class GenerationClient:
     def __init__(
         self,
@@ -92,6 +99,7 @@ class GenerationClient:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.max_tokens = max_tokens
+        self.timeout_s = timeout_s
         self.client = client or httpx.Client(timeout=timeout_s)
         if self.model == "auto":
             self.model = self._resolve_model()
@@ -145,12 +153,18 @@ class GenerationClient:
         acc = ""
         flushed = 0
         finish = None
+        # the httpx read timeout only bounds gaps between chunks; a slow
+        # steady stream could hold a harness worker long past the stage
+        # deadline, so enforce a total deadline here too
+        t0 = time.perf_counter()
         with self.client.stream(
             "POST", f"{self.base_url}/chat/completions",
             json=self._body(system, user, max_tokens, stream=True),
         ) as response:
             response.raise_for_status()
             for line in response.iter_lines():
+                if time.perf_counter() - t0 > self.timeout_s:
+                    raise httpx.ReadTimeout("stream exceeded the total deadline")
                 if not line.startswith("data:"):
                     continue
                 data = line[len("data:"):].strip()
@@ -182,7 +196,7 @@ def answer(client: GenerationClient, hits: list[Hit], query: str,
         text = client.chat(SYSTEM_PROMPT, user, max_tokens=max_tokens)
     else:
         text = client.chat_stream(SYSTEM_PROMPT, user, on_token, max_tokens=max_tokens)
-    if NO_ANSWER_TOKEN in text:
+    if _is_no_answer(text):
         return Refusal(
             reason_code="model_abstained",
             message="the retrieved passages do not answer this",

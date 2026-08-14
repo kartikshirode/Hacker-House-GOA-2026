@@ -49,6 +49,20 @@ def test_no_answer_token_becomes_refusal():
     assert result.reason_code == "model_abstained"
 
 
+def test_no_answer_with_punctuation_still_refuses():
+    result = answer(client_returning("NO_ANSWER."), [make_hit()], "who is zzz")
+    assert isinstance(result, Refusal)
+
+
+def test_no_answer_mid_sentence_is_an_answer():
+    # a buried sentinel is answer text; refusing would retract tokens the
+    # stream already showed
+    text = "The report was titled NO_ANSWER and sold well."
+    result = answer(client_returning(text), [make_hit()], "what was the report called")
+    assert isinstance(result, AnswerPayload)
+    assert result.text == text
+
+
 def test_transport_error_raises_for_harness_fallback():
     def boom(request):
         raise httpx.ConnectError("vllm down")
