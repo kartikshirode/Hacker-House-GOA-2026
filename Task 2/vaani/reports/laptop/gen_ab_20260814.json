@@ -1,0 +1,26 @@
+{
+  "hardware": "laptop RTX 4060 8GB, llama.cpp b10426 CUDA, -ngl 99 -fa 1 -c 2048",
+  "bench": "scripts/gen_bench.py --runs 10, warm server, includes prompt build and http",
+  "prompt_caps": {"en": 32, "hi": 64},
+  "configs": {
+    "Qwen3-0.6B-Q8_0 (qwen official)": {
+      "english_ms": {"p50": 77.1, "min": 75.3, "max": 81.6, "truncated": "0/10"},
+      "hindi_ms": {"p50": 231.9, "min": 230.1, "max": 258.8, "truncated": "0/10"},
+      "english_sample": "A corporation is a company or group of people authorized to act as a single entity.",
+      "hindi_sample": "निगम एक व्यक्ति के रूप में मान्यता प्राप्त करने वाला समूह है।"
+    },
+    "Qwen3-0.6B-Q4_K_M (unsloth imatrix)": {
+      "english_ms": {"p50": 96.6, "min": 96.0, "max": 109.2, "truncated": "0/10"},
+      "hindi_ms": {"p50": 157.5, "min": 156.8, "max": 183.7, "truncated": "0/10"},
+      "english_sample": "A corporation is a company or group of people authorized to act as a single entity, legally a person, and recognized as such in law.",
+      "hindi_sample": "निगम एक व्यक्ति के रूप में मान्यता प्राप्त होता है।"
+    }
+  },
+  "notes": [
+    "latencies track answer length more than quant speed; the two builds phrase differently so per-token rates are confounded, as the review warned",
+    "both meet the 200ms budget on english, which is the demo voice path after sarvam translate",
+    "q8 wrote the tighter english answer and the more complete hindi one; q4 hindi dropped the group-of-people sense",
+    "provenance differs: q8 is the qwen official artifact, q4 is an unsloth imatrix build"
+  ],
+  "decision": "Q8_0 stays the laptop default; better answers, same budget headroom on the english path"
+}

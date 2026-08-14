@@ -10,10 +10,15 @@ laptop case.
 
 import argparse
 import statistics
+import sys
 import time
 from pathlib import Path
 
 import httpx
+
+# hindi samples print on windows consoles too
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 from vaani.answer_generative import GenerationClient, TruncatedAnswer, answer
 from vaani.retriever import Hit
