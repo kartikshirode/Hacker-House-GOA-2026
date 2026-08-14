@@ -338,19 +338,25 @@ async function post(url, body, isForm) {
 // authoritative answer and replaces whatever was typed out.
 const WORKLET_SRC = `
 class PCMForwarder extends AudioWorkletProcessor {
-  constructor() { super(); this.buf = []; this.len = 0; }
+  constructor() {
+    super();
+    this.buf = []; this.len = 0;
+    this.port.onmessage = () => this.flush();
+  }
+  flush() {
+    if (!this.len) return;
+    const all = new Float32Array(this.len);
+    let o = 0;
+    for (const b of this.buf) { all.set(b, o); o += b.length; }
+    this.buf = []; this.len = 0;
+    this.port.postMessage(all, [all.buffer]);
+  }
   process(inputs) {
     const ch = inputs[0] && inputs[0][0];
     if (ch) {
       this.buf.push(new Float32Array(ch));
       this.len += ch.length;
-      if (this.len >= 4096) {
-        const all = new Float32Array(this.len);
-        let o = 0;
-        for (const b of this.buf) { all.set(b, o); o += b.length; }
-        this.buf = []; this.len = 0;
-        this.port.postMessage(all, [all.buffer]);
-      }
+      if (this.len >= 4096) this.flush();
     }
     return true;
   }
@@ -398,8 +404,13 @@ async function startStreaming(stream, onUnavailable) {
   streamBuf = "";
   let gotResult = false;
   let stopped = false;
+  let finished = false;
 
+  // idempotent: runs once no matter which path gets here first, so the
+  // mic never stays hot after a result, an error or a dropped socket
   const finish = () => {
+    if (finished) return;
+    finished = true;
     node.disconnect();
     stream.getTracks().forEach(t => t.stop());
     audioCtx.close();
@@ -421,26 +432,32 @@ async function startStreaming(stream, onUnavailable) {
     } else if (msg.type === "result") {
       gotResult = true;
       streamBuf = "";
+      finish();
       render(msg);
       hint.textContent = "Tap the mic to ask another";
       ws.close();
       session = null;
     } else if (msg.type === "error") {
       wsMode = false;
-      if (!stopped) finish();
+      finish();
       ws.close();
       session = null;
       onUnavailable();
     }
   };
   ws.onclose = () => {
+    finish();
+    session = null;
     if (!gotResult && wsMode && stopped) hint.textContent = "Tap the mic to try again";
   };
 
   return {
     stop() {
       stopped = true;
-      finish();
+      // let the worklet flush its partial tail through the still-open
+      // socket before the tracks die, then clean up
+      node.port.postMessage("flush");
+      setTimeout(finish, 150);
       hint.textContent = "waiting for the answer…";
       // keep the socket: the final transcript and result are still coming
       setTimeout(() => { if (!gotResult) { ws.close(); session = null; } }, 8000);
