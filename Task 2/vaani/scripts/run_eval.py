@@ -54,6 +54,8 @@ def main() -> None:
     ap.add_argument("--strategies", default=None, help="comma list, default all built")
     ap.add_argument("--k", type=int, default=10)
     ap.add_argument("--abstain-threshold", type=float, default=0.85)
+    ap.add_argument("--generation-url", default=None,
+                    help="openai-compatible endpoint; omit for extractive answers")
     args = ap.parse_args()
 
     corpus = Path(args.corpus)
@@ -61,6 +63,7 @@ def main() -> None:
     runtime = Runtime(PipelineConfig(
         corpus_dir=str(corpus), index_root=args.indexes, k=args.k,
         abstain_threshold=args.abstain_threshold, strategies=strategies,
+        generation_url=args.generation_url,
     ))
     pipeline = build_text_pipeline(runtime)
     queries, qrels = load_eval_queries(corpus, args.n)

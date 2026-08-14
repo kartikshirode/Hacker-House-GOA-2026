@@ -100,12 +100,15 @@ def create_app(run_pipeline, stt) -> FastAPI:
 
 
 def create_default_app() -> FastAPI:
+    import os
+
     from vaani.pipeline_text import PipelineConfig, Runtime, build_text_pipeline
     from vaani.stt import SarvamSTT
 
     runtime = Runtime(PipelineConfig(
-        corpus_dir="data/subset/hin_val_100k",
-        index_root="indexes/hin_val_100k",
+        corpus_dir=os.environ.get("VAANI_CORPUS", "data/subset/hin_val_100k"),
+        index_root=os.environ.get("VAANI_INDEXES", "indexes/hin_val_100k"),
+        generation_url=os.environ.get("VAANI_GENERATION_URL") or None,
     ))
     pipeline = build_text_pipeline(runtime)
     stt = SarvamSTT()

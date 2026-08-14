@@ -10,7 +10,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from vaani import answer_extractive, guards
+from vaani import answer_extractive, answer_generative, guards
+from vaani.answer_generative import GenerationClient
 from vaani.embed import DEFAULT_MODEL, Embedder
 from vaani.harness import Pipeline, Refusal, Stage
 from vaani.retriever import Retriever
@@ -28,6 +29,10 @@ class PipelineConfig(BaseModel):
     strategies: list[str] | None = None
     model: str = DEFAULT_MODEL
     device: str | None = None
+    # None disables generation and the extractive path answers directly
+    generation_url: str | None = None
+    generation_model: str = "Qwen/Qwen3-1.7B"
+    generation_timeout_ms: float = 150.0
 
 
 class Runtime:
@@ -38,6 +43,13 @@ class Runtime:
         self.embedder = Embedder(cfg.model, device=cfg.device)
         self.store = PassageStore.load(Path(cfg.corpus_dir))
         self.retriever = Retriever(load_strategies(Path(cfg.index_root)), self.store)
+        self.genclient = None
+        if cfg.generation_url:
+            self.genclient = GenerationClient(
+                base_url=cfg.generation_url,
+                model=cfg.generation_model,
+                timeout_s=cfg.generation_timeout_ms / 1000.0,
+            )
         # first encode pays model warmup; do it here, not on a request
         self.embedder.encode_queries(["warmup"])
 
@@ -74,8 +86,27 @@ def build_text_pipeline(runtime: Runtime) -> Pipeline:
             )
         return {}
 
-    def answer(ctx):
+    def extractive(ctx):
         return {"answer": answer_extractive.answer(ctx["retrieval"].hits, ctx["query"])}
+
+    def generative(ctx):
+        result = answer_generative.answer(
+            runtime.genclient, ctx["retrieval"].hits, ctx["query"]
+        )
+        if isinstance(result, Refusal):
+            return result
+        return {"answer": result}
+
+    if runtime.genclient is not None:
+        # generation gets a hard deadline; blowing it degrades to the
+        # sub-10ms extractive floor instead of blowing the budget
+        answer_stage = Stage(
+            "answer", generative,
+            timeout_ms=cfg.generation_timeout_ms + 25,
+            fallback=Stage("extractive", extractive),
+        )
+    else:
+        answer_stage = Stage("answer", extractive, timeout_ms=40)
 
     def guard_output(ctx):
         payload = ctx["answer"]
@@ -90,6 +121,6 @@ def build_text_pipeline(runtime: Runtime) -> Pipeline:
         Stage("embed_query", embed_query, timeout_ms=50),
         Stage("retrieve", retrieve, timeout_ms=60),
         Stage("abstain_gate", abstain_gate),
-        Stage("answer", answer, timeout_ms=40),
+        answer_stage,
         Stage("guard_output", guard_output, timeout_ms=40),
     ])
