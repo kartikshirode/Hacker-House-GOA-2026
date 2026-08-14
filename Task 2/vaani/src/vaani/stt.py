@@ -34,6 +34,12 @@ SARVAM_STT_URL = "https://api.sarvam.ai/speech-to-text"
 RUPEES_PER_SECOND = 30.0 / 3600.0  # ₹30 per audio hour
 
 
+class BudgetExhausted(RuntimeError):
+    """The spend ledger crossed the configured ceiling; no more paid
+    calls until a human raises it. Keeps a judge reserve intact even if
+    a public link gets hammered."""
+
+
 class TranscriptResult(BaseModel):
     text: str
     language_code: str | None = None
@@ -52,6 +58,7 @@ class SarvamSTT:
         usage_log: str | Path = "data/stt_usage.jsonl",
         mock: bool | None = None,
         timeout_s: float = 20.0,
+        budget_rupees: float | None = None,
     ):
         # None means "use the environment"; an explicit empty string means
         # "no key", so tests can never leak onto the real API
@@ -60,6 +67,11 @@ class SarvamSTT:
         self.cache_dir = Path(cache_dir)
         self.usage_log = Path(usage_log)
         self.mock = mock if mock is not None else os.environ.get("VAANI_STT_MOCK") == "1"
+        # hard spend ceiling below the ₹100 balance so judges always have
+        # a reserve even if a public link burns credits
+        self.budget_rupees = budget_rupees if budget_rupees is not None else float(
+            os.environ.get("VAANI_STT_BUDGET_RUPEES", "70")
+        )
         self.client = httpx.Client(timeout=timeout_s)
 
     # -- helpers ---------------------------------------------------------
@@ -91,6 +103,20 @@ class SarvamSTT:
             if line.strip():
                 total += json.loads(line)["est_rupees"]
         return round(total, 2)
+
+    def check_budget(self) -> None:
+        """Raise when the ledger has crossed the ceiling."""
+        spent = self.spent_rupees()
+        if spent >= self.budget_rupees:
+            raise BudgetExhausted(
+                f"stt spend {spent} rupees is at the {self.budget_rupees} ceiling"
+            )
+
+    def record_realtime_seconds(self, seconds: float) -> None:
+        """Streaming sessions bill by audio time too; the websocket route
+        reports what it pumped so the ledger stays complete."""
+        if seconds > 0 and not self.mock:
+            self._log_usage(seconds)
 
     # -- transcription ---------------------------------------------------
 
@@ -126,6 +152,7 @@ class SarvamSTT:
                 "SARVAM_API_KEY is not set; put it in Task 2/vaani/.env "
                 "or export it before making real STT calls"
             )
+        self.check_budget()
 
         t0 = time.perf_counter()
         response = self.client.post(

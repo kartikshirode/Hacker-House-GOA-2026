@@ -227,6 +227,8 @@ const ctx = barsCanvas.getContext("2d");
 
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+// voice routes can be gated by an access key handed out with the link
+const ACCESS_KEY = new URLSearchParams(location.search).get("key");
 
 let recorder = null, chunks = [], audioCtx = null, analyser = null, rafId = null;
 let wsMode = true;   // streaming first; drops to clip mode if the server declines
@@ -319,10 +321,11 @@ function friendlyRefusal(refusal) {
 
 async function post(url, body, isForm) {
   hint.textContent = "thinking…";
+  const headers = ACCESS_KEY ? { "X-Vaani-Key": ACCESS_KEY } : {};
   try {
     const res = await fetch(url, isForm
-      ? { method: "POST", body }
-      : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      ? { method: "POST", headers, body }
+      : { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const data = await res.json();
     render(data);
     hint.textContent = "Tap the mic to ask another";
@@ -388,7 +391,8 @@ function showToken(delta) {
 
 async function startStreaming(stream, onUnavailable) {
   const scheme = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${scheme}://${location.host}/ws/voice`);
+  const keyQuery = ACCESS_KEY ? `?key=${encodeURIComponent(ACCESS_KEY)}` : "";
+  const ws = new WebSocket(`${scheme}://${location.host}/ws/voice${keyQuery}`);
   ws.binaryType = "arraybuffer";
   await new Promise((ok, no) => { ws.onopen = ok; ws.onerror = no; });
 

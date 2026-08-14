@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 
 from vaani.harness import AnswerPayload, PipelineResult, Refusal, StageEvent
 from vaani.server import create_app
-from vaani.stt import TranscriptResult
+from vaani.stt import BudgetExhausted, TranscriptResult
 
 
 def fake_result(answer):
@@ -72,6 +72,50 @@ def test_voice_empty_transcript_refuses_without_pipeline():
 
 def test_health():
     assert make_client().get("/healthz").json() == {"ok": True}
+
+
+def test_voice_upload_too_large_refused_before_stt():
+    class NeverSTT:
+        def transcribe_bytes(self, *a, **k):
+            raise AssertionError("stt ran on an oversized clip")
+
+    client = make_client(stt=NeverSTT(), max_upload_bytes=10)
+    res = client.post("/api/voice", files={"file": ("q.webm", b"x" * 100, "audio/webm")})
+    assert res.status_code == 413
+    assert res.json()["refusal"]["reason_code"] == "upload_too_large"
+
+
+def test_voice_budget_exhausted_becomes_refusal():
+    class BrokeSTT:
+        def transcribe_bytes(self, *a, **k):
+            raise BudgetExhausted("ceiling hit")
+
+    client = make_client(stt=BrokeSTT())
+    body = client.post(
+        "/api/voice", files={"file": ("q.webm", b"fake", "audio/webm")}
+    ).json()
+    assert body["refused"]
+    assert body["refusal"]["reason_code"] == "stt_budget_exhausted"
+
+
+def test_voice_access_token_gate():
+    client = make_client(access_token="s3cret")
+    denied = client.post("/api/voice", files={"file": ("q.webm", b"fake", "audio/webm")})
+    assert denied.status_code == 401
+    allowed = client.post(
+        "/api/voice", files={"file": ("q.webm", b"fake", "audio/webm")},
+        headers={"X-Vaani-Key": "s3cret"},
+    )
+    assert allowed.status_code == 200
+    assert not allowed.json()["refused"]
+
+
+def test_ws_voice_access_token_gate():
+    client = make_client(access_token="s3cret", stt_session_factory=FakeSession)
+    with client.websocket_connect("/ws/voice") as ws:
+        assert ws.receive_json()["message"] == "unauthorized"
+    with client.websocket_connect("/ws/voice?key=s3cret") as ws:
+        assert ws.receive_json()["type"] == "partial"
 
 
 class FakeSession:

@@ -23,8 +23,13 @@ from typing import AsyncIterator, Literal
 
 from pydantic import BaseModel
 
-REALTIME_URL = "wss://api.sarvam.ai/speech-to-text-realtime/ws"
-MODEL = "saaras:v3-realtime"
+# The endpoint and model live in envs because Sarvam's canonical docs
+# now describe GET /speech-to-text/ws with saaras:v3, while this path
+# may be legacy. The paid session check flips these without a code edit.
+REALTIME_URL = os.environ.get(
+    "VAANI_STT_WS_URL", "wss://api.sarvam.ai/speech-to-text-realtime/ws"
+)
+MODEL = os.environ.get("VAANI_STT_WS_MODEL", "saaras:v3-realtime")
 
 
 class SpeechEvent(BaseModel):

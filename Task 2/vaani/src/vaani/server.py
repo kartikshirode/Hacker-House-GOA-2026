@@ -17,12 +17,13 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Header, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from vaani.harness import PipelineResult, Refusal
+from vaani.stt import BudgetExhausted
 
 WEB_DIR = Path(__file__).resolve().parents[2] / "web"
 
@@ -71,14 +72,25 @@ def _result_json(result: PipelineResult, extra_stages: list[dict] | None = None,
     }
 
 
-def create_app(run_pipeline, stt, speculate=None, stt_session_factory=None) -> FastAPI:
+def create_app(run_pipeline, stt, speculate=None, stt_session_factory=None, *,
+               access_token: str | None = None,
+               max_upload_bytes: int = 1_000_000,
+               max_utterance_s: float = 20.0,
+               max_voice_sessions: int = 2) -> FastAPI:
     """run_pipeline: callable(ctx: dict) -> PipelineResult, where ctx holds
     at least {"query"} and may carry speculative {"query_vec", "retrieval"}.
     stt: transcribe_bytes(audio, ...) -> TranscriptResult for the clip path.
     speculate: callable(text) -> ctx delta, used on streaming partials.
     stt_session_factory: () -> async context manager with send_audio/events,
-    enables the realtime websocket route."""
+    enables the realtime websocket route.
+
+    The keyword caps exist because voice costs money: uploads over
+    max_upload_bytes are refused before Sarvam sees them, streaming stops
+    forwarding after max_utterance_s of audio, at most max_voice_sessions
+    stream concurrently, and access_token (when set) gates both voice
+    routes. Text ask stays open; retrieval is free."""
     app = FastAPI(title="vaani")
+    active_sessions = {"n": 0}
     # speculation gets one dedicated worker: stale jobs queue here instead
     # of competing with the pipeline for the default executor, and a
     # queued-not-started job cancels cleanly when a newer partial lands
@@ -97,10 +109,26 @@ def create_app(run_pipeline, stt, speculate=None, stt_session_factory=None) -> F
     @app.websocket("/ws/voice")
     async def ws_voice(ws: WebSocket):
         await ws.accept()
+        if access_token and ws.query_params.get("key") != access_token:
+            await ws.send_json({"type": "error", "message": "unauthorized"})
+            await ws.close()
+            return
         if stt_session_factory is None:
             await ws.send_json({"type": "error", "message": "realtime stt not configured"})
             await ws.close()
             return
+        if active_sessions["n"] >= max_voice_sessions:
+            await ws.send_json({"type": "error", "message": "busy, try again in a moment"})
+            await ws.close()
+            return
+        budget_check = getattr(stt, "check_budget", None)
+        if budget_check and not getattr(stt, "mock", False):
+            try:
+                budget_check()
+            except BudgetExhausted:
+                await ws.send_json({"type": "error", "message": "voice budget exhausted, use the text box"})
+                await ws.close()
+                return
 
         loop = asyncio.get_event_loop()
         session = stt_session_factory()
@@ -109,92 +137,130 @@ def create_app(run_pipeline, stt, speculate=None, stt_session_factory=None) -> F
         spec_norm: str | None = None
         spec_future = None
 
+        max_audio_bytes = int(max_utterance_s * 32000)  # 16kHz pcm16
+        pumped = {"bytes": 0}
+
         async def pump_audio():
             try:
                 while True:
                     frame = await ws.receive_bytes()
+                    if pumped["bytes"] >= max_audio_bytes:
+                        continue  # cap hit: drain the socket, stop paying
+                    pumped["bytes"] += len(frame)
                     await session.send_audio(frame)
             except (WebSocketDisconnect, RuntimeError):
                 pass
 
-        async with session:
-            audio_task = asyncio.create_task(pump_audio())
+        active_sessions["n"] += 1
+        try:
+            async with session:
+                audio_task = asyncio.create_task(pump_audio())
+                try:
+                    async for event in session.events():
+                        if event.kind == "partial" and event.text:
+                            await ws.send_json({"type": "partial", "text": event.text})
+                            norm = _norm_transcript(event.text)
+                            if (speculate is not None
+                                    and len(event.text) >= SPECULATE_MIN_CHARS
+                                    and norm != spec_norm):
+                                if spec_future is not None:
+                                    spec_future.cancel()  # no-op once running
+                                spec_norm = norm
+                                spec_future = spec_pool.submit(speculate, event.text)
+                        elif event.kind == "final" and event.text:
+                            t_final = time.perf_counter()
+                            await ws.send_json({"type": "transcript", "text": event.text})
+                            ctx = {"query": event.text}
+                            if (spec_future is not None
+                                    and spec_norm == _norm_transcript(event.text)):
+                                try:
+                                    # short bounded wait; either way the cost is
+                                    # visible in transcript_to_result_ms below
+                                    ctx.update(await asyncio.wait_for(
+                                        asyncio.wrap_future(spec_future), timeout=0.05))
+                                    ctx["speculative"] = True
+                                except Exception:  # noqa: BLE001 fresh retrieval instead
+                                    pass
+                            spec_norm, spec_future = None, None
+
+                            # generation streams deltas from a worker thread;
+                            # forward them until the pipeline returns, then the
+                            # result event below is the authoritative answer
+                            live = {"on": True}
+                            token_sends: list = []
+
+                            def on_token(delta: str, _live=live, _sends=token_sends):
+                                if _live["on"]:
+                                    _sends.append(asyncio.run_coroutine_threadsafe(
+                                        ws.send_json({"type": "token", "text": delta}), loop
+                                    ))
+
+                            ctx["on_token"] = on_token
+                            result = await loop.run_in_executor(None, run_pipeline, ctx)
+                            live["on"] = False
+                            # drain pending token sends so none lands after the
+                            # authoritative result event
+                            for send in token_sends:
+                                try:
+                                    await asyncio.wrap_future(send)
+                                except Exception:  # noqa: BLE001
+                                    pass
+                            payload = _result_json(result, guards=_guard_json(ctx))
+                            payload["type"] = "result"
+                            payload["transcript"] = event.text
+                            payload["speculative"] = ctx.get("speculative", False)
+                            # honest wall clock from final transcript to result,
+                            # including any speculative wait, not just stage time
+                            payload["transcript_to_result_ms"] = round(
+                                (time.perf_counter() - t_final) * 1000, 2)
+                            await ws.send_json(payload)
+                        elif event.kind == "error":
+                            await ws.send_json({"type": "error", "message": event.raw_type})
+                except (WebSocketDisconnect, RuntimeError):
+                    pass
+                finally:
+                    audio_task.cancel()
+        except Exception:  # noqa: BLE001 usually the sarvam connect failing
             try:
-                async for event in session.events():
-                    if event.kind == "partial" and event.text:
-                        await ws.send_json({"type": "partial", "text": event.text})
-                        norm = _norm_transcript(event.text)
-                        if (speculate is not None
-                                and len(event.text) >= SPECULATE_MIN_CHARS
-                                and norm != spec_norm):
-                            if spec_future is not None:
-                                spec_future.cancel()  # no-op once running
-                            spec_norm = norm
-                            spec_future = spec_pool.submit(speculate, event.text)
-                    elif event.kind == "final" and event.text:
-                        t_final = time.perf_counter()
-                        await ws.send_json({"type": "transcript", "text": event.text})
-                        ctx = {"query": event.text}
-                        if (spec_future is not None
-                                and spec_norm == _norm_transcript(event.text)):
-                            try:
-                                # short bounded wait; either way the cost is
-                                # visible in transcript_to_result_ms below
-                                ctx.update(await asyncio.wait_for(
-                                    asyncio.wrap_future(spec_future), timeout=0.05))
-                                ctx["speculative"] = True
-                            except Exception:  # noqa: BLE001 fresh retrieval instead
-                                pass
-                        spec_norm, spec_future = None, None
-
-                        # generation streams deltas from a worker thread;
-                        # forward them until the pipeline returns, then the
-                        # result event below is the authoritative answer
-                        live = {"on": True}
-                        token_sends: list = []
-
-                        def on_token(delta: str, _live=live, _sends=token_sends):
-                            if _live["on"]:
-                                _sends.append(asyncio.run_coroutine_threadsafe(
-                                    ws.send_json({"type": "token", "text": delta}), loop
-                                ))
-
-                        ctx["on_token"] = on_token
-                        result = await loop.run_in_executor(None, run_pipeline, ctx)
-                        live["on"] = False
-                        # drain pending token sends so none lands after the
-                        # authoritative result event
-                        for send in token_sends:
-                            try:
-                                await asyncio.wrap_future(send)
-                            except Exception:  # noqa: BLE001
-                                pass
-                        payload = _result_json(result, guards=_guard_json(ctx))
-                        payload["type"] = "result"
-                        payload["transcript"] = event.text
-                        payload["speculative"] = ctx.get("speculative", False)
-                        # honest wall clock from final transcript to result,
-                        # including any speculative wait, not just stage time
-                        payload["transcript_to_result_ms"] = round(
-                            (time.perf_counter() - t_final) * 1000, 2)
-                        await ws.send_json(payload)
-                    elif event.kind == "error":
-                        await ws.send_json({"type": "error", "message": event.raw_type})
-            except (WebSocketDisconnect, RuntimeError):
+                await ws.send_json({"type": "error", "message": "stt connection failed"})
+            except Exception:  # noqa: BLE001 socket already gone
                 pass
-            finally:
-                audio_task.cancel()
+        finally:
+            # runs even when the sarvam session fails to open, so a bad
+            # connect can never leak a session slot or skip the ledger
+            active_sessions["n"] -= 1
+            recorder = getattr(stt, "record_realtime_seconds", None)
+            if recorder:
+                recorder(pumped["bytes"] / 32000.0)
+
+    def _voice_refusal(reason: str, message: str, status: int = 200) -> JSONResponse:
+        return JSONResponse({
+            "refused": True, "answer": None,
+            "refusal": {"reason_code": reason, "message": message},
+            "transcript": "", "trace": [], "guards": {},
+            "pipeline_ms": 0.0, "total_ms": 0.0, "request_id": "",
+        }, status_code=status)
 
     @app.post("/api/voice")
-    async def voice(file: UploadFile = File(...), language: str = "unknown"):
+    async def voice(file: UploadFile = File(...), language: str = "unknown",
+                    x_vaani_key: str | None = Header(default=None)):
+        if access_token and x_vaani_key != access_token:
+            return _voice_refusal("unauthorized", "voice needs the access key", 401)
         audio = await file.read()
+        if len(audio) > max_upload_bytes:
+            return _voice_refusal("upload_too_large",
+                                  f"clip exceeds {max_upload_bytes} bytes", 413)
         loop = asyncio.get_event_loop()
         t0 = time.perf_counter()
         # both calls block; keep them off the event loop so ws partials
         # and other requests stay live while this one thinks
-        transcript = await loop.run_in_executor(None, lambda: stt.transcribe_bytes(
-            audio, filename=file.filename or "clip.webm", language=language
-        ))
+        try:
+            transcript = await loop.run_in_executor(None, lambda: stt.transcribe_bytes(
+                audio, filename=file.filename or "clip.webm", language=language
+            ))
+        except BudgetExhausted:
+            return _voice_refusal("stt_budget_exhausted",
+                                  "voice budget exhausted, use the text box")
         stt_ms = (time.perf_counter() - t0) * 1000
         stt_stage = {
             "stage": "stt",
@@ -239,6 +305,9 @@ def create_default_app() -> FastAPI:
         generation_url=os.environ.get("VAANI_GENERATION_URL") or None,
         guard_url=os.environ.get("VAANI_GUARD_URL") or None,
         device=os.environ.get("VAANI_DEVICE") or None,
+        # cpu hosts raise these; the defaults fit the gpu budget
+        generation_timeout_ms=float(os.environ.get("VAANI_GENERATION_TIMEOUT_MS", "150")),
+        guard_timeout_ms=float(os.environ.get("VAANI_GUARD_TIMEOUT_MS", "400")),
     ))
     pipeline = build_text_pipeline(runtime)
     stt = SarvamSTT()
@@ -252,4 +321,8 @@ def create_default_app() -> FastAPI:
         stt,
         speculate=runtime.speculative_retrieve,
         stt_session_factory=session_factory,
+        access_token=os.environ.get("VAANI_ACCESS_TOKEN") or None,
+        max_upload_bytes=int(os.environ.get("VAANI_MAX_UPLOAD_BYTES", "1000000")),
+        max_utterance_s=float(os.environ.get("VAANI_MAX_UTTERANCE_S", "20")),
+        max_voice_sessions=int(os.environ.get("VAANI_MAX_VOICE_SESSIONS", "2")),
     )

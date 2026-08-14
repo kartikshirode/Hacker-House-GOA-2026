@@ -35,9 +35,12 @@ class PipelineConfig(BaseModel):
     # None disables generation and the extractive path answers directly
     generation_url: str | None = None
     generation_model: str = "auto"  # resolved from the serving endpoint
+    # 150ms fits the gpu budget; cpu hosts must raise this via
+    # VAANI_GENERATION_TIMEOUT_MS or every request falls back extractive
     generation_timeout_ms: float = 150.0
     # None runs the permissive guard stubs
     guard_url: str | None = None
+    guard_timeout_ms: float = 400.0
     groundedness_threshold: float = 0.5
 
 
@@ -67,7 +70,9 @@ class Runtime:
                 timeout_s=cfg.generation_timeout_ms / 1000.0,
             )
         self.guards = GuardClient(
-            cfg.guard_url, groundedness_threshold=cfg.groundedness_threshold
+            cfg.guard_url,
+            groundedness_threshold=cfg.groundedness_threshold,
+            timeout_s=cfg.guard_timeout_ms / 1000.0,
         )
         # input guard overlaps with embed + retrieve on this pool
         self.guard_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="guard")
