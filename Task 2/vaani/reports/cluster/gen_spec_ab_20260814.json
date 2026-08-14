@@ -17,7 +17,9 @@
   "notes": [
     "1.9x english, 1.85x hindi; answers identical between configs since decoding is greedy and speculation preserves outputs",
     "rag answers copy context spans, the best case for prompt lookup, which is why the gain lands near the top of the expected range",
-    "full pipeline effect: english 1000-query p50 went 132.6ms (old prompt, no spec) to 122.0ms, p90 191.5 to 169.5, p100 556.8 to 357.0"
+    "the on/off rows above are a clean a/b: same prompt, same caps, same server, minutes apart, only the speculative flag differs",
+    "caveat: both rows use one fixed short prompt, so the multiplier on varied real-query prompts may differ; a paired real-query trial is a candidate for the final cluster session",
+    "the cross-session full-pipeline comparison (p50 132.6 to 122.0, p90 191.5 to 169.5, p100 556.8 to 357.0) mixes the shorter prompt AND speculation and is not attributable to either alone"
   ],
   "decision": "ngram speculation stays the cluster default; VAANI_SPEC=off remains the baseline switch"
 }

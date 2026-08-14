@@ -51,6 +51,12 @@ One arbitrary pipeline pass could stop at the abstain gate and warm nothing behi
 - Finding 6's full answer-metric suite (TTFT distributions, per-token usage) is cut to token F1 plus outcome counts. Enough to compare configs, cheap to keep.
 - Finding 11's matched-quant conversion is skipped; provenance gets noted instead. This is a speed check, not a quant paper.
 
+## Deferred from review round 2
+
+- R2-14, speculative-retrieval replay in eval: would measure the spec hit rate and true transcript-to-result percentiles, but needs recorded partial transcripts. The server now reports transcript_to_result_ms live, which covers the honesty half; the replay harness waits until after submission artifacts are safe.
+- R2-16, ONNX or int8 embedding: embed at 34.8ms is now the biggest fixed cost and int8 could roughly halve it, but swapping the encoder demands a full quality rerun to prove MRR holds. Worth doing only if a cluster session remains after the demo video and live link are locked.
+- R2-2 is mitigated, not solved: chat_stream now enforces a total deadline so a slow stream cannot hold a worker much past the stage timeout, but true cancellation still needs an async client; the harness docstring keeps the tradeoff documented.
+
 ## Laptop bring-up (fallback + live link)
 
 Already done: full indexes local (3.9GB), Q8 and Q4 GGUFs, llama.cpp CUDA build in tools/llama/.
