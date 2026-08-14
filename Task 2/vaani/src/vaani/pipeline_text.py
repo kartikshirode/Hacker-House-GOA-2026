@@ -48,7 +48,17 @@ class Runtime:
         self.cfg = cfg
         self.embedder = Embedder(cfg.model, device=cfg.device)
         self.store = PassageStore.load(Path(cfg.corpus_dir))
-        self.retriever = Retriever(load_strategies(Path(cfg.index_root)), self.store)
+        strategies = load_strategies(Path(cfg.index_root))
+        if cfg.strategies:
+            # fail-soft loading may have skipped a broken index; a config
+            # naming it should fail here, not KeyError on the first query
+            missing = set(cfg.strategies) - set(strategies)
+            if missing:
+                raise RuntimeError(
+                    f"requested strategies not loaded: {sorted(missing)}; "
+                    f"available: {sorted(strategies)}"
+                )
+        self.retriever = Retriever(strategies, self.store)
         self.genclient = None
         if cfg.generation_url:
             self.genclient = GenerationClient(
@@ -119,7 +129,10 @@ def build_text_pipeline(runtime: Runtime) -> Pipeline:
         return {"retrieval": result}
 
     def abstain_gate(ctx):
-        verdict = ctx["guard_future"].result(timeout=0.5)
+        try:
+            verdict = ctx["guard_future"].result(timeout=0.15)
+        except Exception:  # noqa: BLE001 fail open per the guards module policy
+            verdict = GuardVerdict(allowed=True, reason="guard_join_timeout")
         ctx["guard_input"] = verdict
         if not verdict.allowed:
             return Refusal(reason_code="unsafe_input", message=verdict.reason)
@@ -179,11 +192,18 @@ def build_text_pipeline(runtime: Runtime) -> Pipeline:
             )
         return {}
 
+    def guard_output_missed(ctx):
+        # a slow guard is a fail-open per the guards module policy, not a
+        # refusal; the verdict records that the answer went unchecked
+        ctx["guard_output"] = GuardVerdict(allowed=True, reason="guard_join_timeout")
+        return {}
+
     return Pipeline([
         Stage("guard_input", guard_input),
         Stage("embed_query", embed_query, timeout_ms=50),
         Stage("retrieve", retrieve, timeout_ms=100),
         Stage("abstain_gate", abstain_gate),
         answer_stage,
-        Stage("guard_output", guard_output, timeout_ms=40),
+        Stage("guard_output", guard_output, timeout_ms=40,
+              fallback=Stage("guard_output_missed", guard_output_missed)),
     ])
