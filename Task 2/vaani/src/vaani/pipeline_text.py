@@ -158,7 +158,7 @@ def build_text_pipeline(runtime: Runtime) -> Pipeline:
     return Pipeline([
         Stage("guard_input", guard_input),
         Stage("embed_query", embed_query, timeout_ms=50),
-        Stage("retrieve", retrieve, timeout_ms=60),
+        Stage("retrieve", retrieve, timeout_ms=100),
         Stage("abstain_gate", abstain_gate),
         answer_stage,
         Stage("guard_output", guard_output, timeout_ms=40),

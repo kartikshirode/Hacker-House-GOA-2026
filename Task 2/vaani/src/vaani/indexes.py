@@ -66,7 +66,20 @@ class LexicalIndex:
     def load(cls, dir: Path | str) -> "LexicalIndex":
         import bm25s
 
-        retriever = bm25s.BM25.load(str(Path(dir) / cls.SUBDIR), mmap=True)
+        # in-RAM load; mmap page-faults cost ~150ms per query at 1M docs
+        retriever = bm25s.BM25.load(str(Path(dir) / cls.SUBDIR), mmap=False)
+        try:
+            # numba scorer takes bm25 from ~145ms to under 1ms on 950K
+            # docs; one dummy retrieve pays the JIT cost here at load time
+            retriever.backend = "numba"  # activate compiles, this selects
+            retriever.activate_numba_scorer()
+            warmup = bm25s.tokenize(["warmup"], stopwords="en", show_progress=False)
+            retriever.retrieve(warmup, k=1, show_progress=False)
+        except Exception as exc:  # noqa: BLE001 numpy backend still works
+            import sys
+
+            print(f"bm25 numba activation failed, numpy fallback: {exc}",
+                  file=sys.stderr)
         return cls(retriever)
 
     def search(self, text: str, k: int) -> tuple[np.ndarray, np.ndarray]:
