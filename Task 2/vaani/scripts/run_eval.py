@@ -14,12 +14,13 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import duckdb
 
-from vaani.eval import mrr_at_k, percentiles, recall_at_k
+from vaani.answer_generative import MAX_TOKENS_EN, MAX_TOKENS_HI
+from vaani.eval import mrr_at_k, percentiles, recall_at_k, token_f1
 from vaani.harness import Refusal
 from vaani.pipeline_text import PipelineConfig, Runtime, build_text_pipeline
 
@@ -28,13 +29,14 @@ def load_eval_queries(corpus: Path, n: int) -> tuple[list[dict], dict[int, set[s
     con = duckdb.connect()
     rows = con.execute(
         f"""
-        SELECT query_id, query, eng_query, query_type
+        SELECT query_id, query, eng_query, query_type, answer, eng_answer
         FROM '{(corpus / 'queries.parquet').as_posix()}'
         ORDER BY hash(query_id) LIMIT {n}
         """
     ).fetchall()
     queries = [
-        {"query_id": r[0], "query": r[1], "eng_query": r[2], "query_type": r[3]}
+        {"query_id": r[0], "query": r[1], "eng_query": r[2], "query_type": r[3],
+         "answer": r[4], "eng_answer": r[5]}
         for r in rows
     ]
     qrels: dict[int, set[str]] = defaultdict(set)
@@ -80,6 +82,10 @@ def main() -> None:
     refused_noanswer = 0
     n_noanswer = 0
     per_type: dict[str, list[float]] = defaultdict(list)
+    answer_kinds: Counter[str] = Counter()
+    refusal_reasons: Counter[str] = Counter()
+    stage_outcomes: Counter[str] = Counter()
+    f1s: list[float] = []
 
     t_wall = time.perf_counter()
     for q in queries:
@@ -89,9 +95,15 @@ def main() -> None:
         totals_ms.append(result.total_ms)
         for e in result.trace:
             stage_ms[e.stage].append(e.dur_ms)
+            if e.outcome != "ok":
+                stage_outcomes[f"{e.stage}:{e.outcome}"] += 1
 
         gold = qrels.get(q["query_id"], set())
         refused = isinstance(result.answer, Refusal)
+        if refused:
+            refusal_reasons[result.answer.reason_code] += 1
+        else:
+            answer_kinds[result.answer.kind] += 1
         if gold:
             retrieval = ctx.get("retrieval")
             ranked = [h.passage_id for h in retrieval.hits] if retrieval else []
@@ -101,6 +113,10 @@ def main() -> None:
             per_type[q["query_type"]].append(mrr)
             if refused:
                 refused_answerable += 1
+            else:
+                ref = q["answer"] if args.hindi else q["eng_answer"]
+                if result.answer.kind == "generative" and ref:
+                    f1s.append(token_f1(result.answer.text, ref))
         else:
             n_noanswer += 1
             if refused:
@@ -116,6 +132,17 @@ def main() -> None:
             "corpus": str(corpus), "indexes": args.indexes, "n": len(queries),
             "hindi_queries": args.hindi, "strategies": strategies or "all",
             "k": args.k, "abstain_threshold": args.abstain_threshold,
+            "generation_url": args.generation_url,
+            "generation_model": runtime.genclient.model if runtime.genclient else None,
+            "max_tokens": {"en": MAX_TOKENS_EN, "hi": MAX_TOKENS_HI},
+            "guard_url": args.guard_url,
+        },
+        "answers": {
+            "kinds": dict(answer_kinds),
+            "refusal_reasons": dict(refusal_reasons),
+            "stage_outcomes": dict(stage_outcomes),
+            "token_f1": round(sum(f1s) / len(f1s), 4) if f1s else None,
+            "n_f1_scored": len(f1s),
         },
         "retrieval": {
             "n_answerable": len(mrrs),
@@ -147,10 +174,16 @@ def main() -> None:
     path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     r, a, l = report["retrieval"], report["abstention"], report["latency_ms"]
+    ans = report["answers"]
     print(f"\nMRR@{args.k}={r['mrr_at_k']}  recall@{args.k}={r['recall_at_k']} "
           f"on {r['n_answerable']} answerable")
     print(f"abstention precision={a['precision']} recall={a['recall']} "
           f"(refused {a['refused_answerable']} answerable)")
+    print(f"answers {ans['kinds']}  refusals {ans['refusal_reasons']}")
+    if ans["stage_outcomes"]:
+        print(f"stage outcomes (non-ok): {ans['stage_outcomes']}")
+    if ans["token_f1"] is not None:
+        print(f"token F1 vs reference = {ans['token_f1']} on {ans['n_f1_scored']} generative answers")
     print(f"latency total ms: {l['total']}")
     for s, p in l["per_stage"].items():
         print(f"  {s:<14} {p}")

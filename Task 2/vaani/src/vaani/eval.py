@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import Counter
+
 import numpy as np
 
 
@@ -17,6 +19,18 @@ def recall_at_k(ranked_ids: list[str], gold_ids: set[str], k: int = 10) -> float
         return 0.0
     found = sum(1 for pid in ranked_ids[:k] if pid in gold_ids)
     return found / len(gold_ids)
+
+
+def token_f1(pred: str, ref: str) -> float:
+    """Whitespace-token overlap F1, the squad-style answer score."""
+    p, r = pred.split(), ref.split()
+    if not p or not r:
+        return 0.0
+    overlap = sum((Counter(p) & Counter(r)).values())
+    if not overlap:
+        return 0.0
+    precision, recall = overlap / len(p), overlap / len(r)
+    return 2 * precision * recall / (precision + recall)
 
 
 def percentiles(samples_ms: list[float]) -> dict[str, float]:
