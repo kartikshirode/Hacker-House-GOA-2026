@@ -1,0 +1,109 @@
+{
+  "config": {
+    "corpus": "data/corpus/hin_val",
+    "indexes": "indexes/hin_val",
+    "n": 1000,
+    "hindi_queries": false,
+    "strategies": "all",
+    "k": 10,
+    "abstain_threshold": 0.85,
+    "generation_url": "http://aicoeserver05:8001/v1",
+    "generation_model": "Qwen/Qwen3-0.6B",
+    "max_tokens": {
+      "en": 32,
+      "hi": 64
+    },
+    "guard_url": "http://aicoeserver05:8002"
+  },
+  "answers": {
+    "kinds": {
+      "extractive": 32,
+      "generative": 693
+    },
+    "refusal_reasons": {
+      "low_confidence": 76,
+      "model_abstained": 134,
+      "ungrounded_answer": 60,
+      "stage_timeout:embed_query": 1,
+      "stage_timeout:guard_output": 1,
+      "unsafe_input": 3
+    },
+    "stage_outcomes": {
+      "answer:fallback": 32,
+      "abstain_gate:refusal": 79,
+      "answer:refusal": 134,
+      "guard_output:refusal": 60,
+      "embed_query:timeout": 1,
+      "guard_output:timeout": 1
+    },
+    "token_f1": 0.2679,
+    "n_f1_scored": 407
+  },
+  "retrieval": {
+    "n_answerable": 529,
+    "mrr_at_k": 0.4066,
+    "recall_at_k": 0.7417,
+    "mrr_by_query_type": {
+      "DESCRIPTION": 0.4082,
+      "ENTITY": 0.398,
+      "LOCATION": 0.4879,
+      "NUMERIC": 0.4078,
+      "PERSON": 0.3158
+    }
+  },
+  "abstention": {
+    "n_noanswer": 471,
+    "refused_noanswer": 169,
+    "refused_answerable": 106,
+    "precision": 0.6145,
+    "recall": 0.3588
+  },
+  "latency_ms": {
+    "total": {
+      "p50": 122.01,
+      "p70": 139.19,
+      "p90": 169.45,
+      "p100": 357.01
+    },
+    "per_stage": {
+      "abstain_gate": {
+        "p50": 0.02,
+        "p70": 0.02,
+        "p90": 0.03,
+        "p100": 132.79
+      },
+      "answer": {
+        "p50": 66.26,
+        "p70": 82.83,
+        "p90": 113.71,
+        "p100": 152.77
+      },
+      "embed_query": {
+        "p50": 34.8,
+        "p70": 35.4,
+        "p90": 36.53,
+        "p100": 356.91
+      },
+      "guard_input": {
+        "p50": 0.03,
+        "p70": 0.03,
+        "p90": 0.04,
+        "p100": 13.97
+      },
+      "guard_output": {
+        "p50": 19.5,
+        "p70": 19.75,
+        "p90": 20.34,
+        "p100": 40.25
+      },
+      "retrieve": {
+        "p50": 4.17,
+        "p70": 4.35,
+        "p90": 4.69,
+        "p100": 6.1
+      }
+    },
+    "wall_seconds": 120.0,
+    "qps": 8.3
+  }
+}

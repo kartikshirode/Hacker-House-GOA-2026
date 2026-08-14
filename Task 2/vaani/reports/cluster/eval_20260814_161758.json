@@ -1,0 +1,107 @@
+{
+  "config": {
+    "corpus": "data/corpus/hin_val",
+    "indexes": "indexes/hin_val",
+    "n": 1000,
+    "hindi_queries": true,
+    "strategies": "all",
+    "k": 10,
+    "abstain_threshold": 0.85,
+    "generation_url": "http://aicoeserver05:8001/v1",
+    "generation_model": "Qwen/Qwen3-0.6B",
+    "max_tokens": {
+      "en": 32,
+      "hi": 64
+    },
+    "guard_url": "http://aicoeserver05:8002"
+  },
+  "answers": {
+    "kinds": {
+      "generative": 151,
+      "extractive": 60
+    },
+    "refusal_reasons": {
+      "unsafe_input": 574,
+      "model_abstained": 83,
+      "stage_error:retrieve": 53,
+      "stage_timeout:embed_query": 1,
+      "low_confidence": 78
+    },
+    "stage_outcomes": {
+      "abstain_gate:refusal": 652,
+      "answer:refusal": 83,
+      "retrieve:error": 53,
+      "embed_query:timeout": 1,
+      "answer:fallback": 60
+    },
+    "token_f1": 0.1877,
+    "n_f1_scored": 94
+  },
+  "retrieval": {
+    "n_answerable": 529,
+    "mrr_at_k": 0.1827,
+    "recall_at_k": 0.3135,
+    "mrr_by_query_type": {
+      "DESCRIPTION": 0.1449,
+      "ENTITY": 0.2033,
+      "LOCATION": 0.2405,
+      "NUMERIC": 0.2699,
+      "PERSON": 0.1554
+    }
+  },
+  "abstention": {
+    "n_noanswer": 471,
+    "refused_noanswer": 387,
+    "refused_answerable": 402,
+    "precision": 0.4905,
+    "recall": 0.8217
+  },
+  "latency_ms": {
+    "total": {
+      "p50": 39.58,
+      "p70": 47.95,
+      "p90": 154.19,
+      "p100": 197.49
+    },
+    "per_stage": {
+      "abstain_gate": {
+        "p50": 0.02,
+        "p70": 0.02,
+        "p90": 0.03,
+        "p100": 0.07
+      },
+      "answer": {
+        "p50": 97.56,
+        "p70": 123.14,
+        "p90": 151.56,
+        "p100": 153.38
+      },
+      "embed_query": {
+        "p50": 33.54,
+        "p70": 35.44,
+        "p90": 38.26,
+        "p100": 50.14
+      },
+      "guard_input": {
+        "p50": 0.02,
+        "p70": 0.03,
+        "p90": 0.04,
+        "p100": 0.77
+      },
+      "guard_output": {
+        "p50": 0.24,
+        "p70": 0.25,
+        "p90": 0.28,
+        "p100": 22.48
+      },
+      "retrieve": {
+        "p50": 3.73,
+        "p70": 3.89,
+        "p90": 4.12,
+        "p100": 6.1
+      }
+    },
+    "wall_seconds": 64.8,
+    "qps": 15.4
+  }
+}

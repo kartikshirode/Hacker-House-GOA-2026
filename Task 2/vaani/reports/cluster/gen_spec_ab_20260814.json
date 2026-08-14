@@ -1,0 +1,23 @@
+{
+  "hardware": "baramati aicoeserver05, Blackwell 1g.24gb MIG quarter, vLLM 0.27.1",
+  "model": "Qwen/Qwen3-0.6B",
+  "bench": "scripts/gen_bench.py --runs 20, warm server, login node over LAN, includes prompt build and http",
+  "prompt_caps": {"en": 32, "hi": 64},
+  "spec_config": {"method": "ngram", "num_speculative_tokens": 4, "prompt_lookup_max": 4, "prompt_lookup_min": 2},
+  "configs": {
+    "ngram speculation on": {
+      "english_ms": {"p50": 43.5, "min": 43.2, "max": 61.2, "truncated": "0/20"},
+      "hindi_ms": {"p50": 130.9, "min": 129.8, "max": 136.4, "truncated": "0/20"}
+    },
+    "speculation off (VAANI_SPEC=off)": {
+      "english_ms": {"p50": 84.7, "min": 84.2, "max": 86.0, "truncated": "0/20"},
+      "hindi_ms": {"p50": 242.0, "min": 241.6, "max": 243.5, "truncated": "0/20"}
+    }
+  },
+  "notes": [
+    "1.9x english, 1.85x hindi; answers identical between configs since decoding is greedy and speculation preserves outputs",
+    "rag answers copy context spans, the best case for prompt lookup, which is why the gain lands near the top of the expected range",
+    "full pipeline effect: english 1000-query p50 went 132.6ms (old prompt, no spec) to 122.0ms, p90 191.5 to 169.5, p100 556.8 to 357.0"
+  ],
+  "decision": "ngram speculation stays the cluster default; VAANI_SPEC=off remains the baseline switch"
+}
