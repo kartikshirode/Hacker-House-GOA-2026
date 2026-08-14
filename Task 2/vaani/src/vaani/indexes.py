@@ -85,10 +85,22 @@ class LexicalIndex:
     def search(self, text: str, k: int) -> tuple[np.ndarray, np.ndarray]:
         import bm25s
 
+        empty = (np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float32))
         tokens = bm25s.tokenize([text], stopwords="en", show_progress=False)
+        # a pure-devanagari query shares no vocab with the english index
+        # and tokenizes to nothing; retrieve raises on that, so hand the
+        # fusion an empty result and let the dense strategies carry it
+        if not tokens.ids or not tokens.ids[0]:
+            return empty
         k = min(k, self.retriever.scores["num_docs"])
-        ids, scores = self.retriever.retrieve(tokens, k=k, show_progress=False)
-        return ids[0].astype(np.int64), scores[0].astype(np.float32)
+        try:
+            ids, scores = self.retriever.retrieve(tokens, k=k, show_progress=False)
+        except Exception:  # noqa: BLE001
+            return empty
+        # zero-score padding means no vocab overlap; junk ranks would
+        # still count in rrf fusion, so drop them
+        mask = scores[0] > 0
+        return ids[0][mask].astype(np.int64), scores[0][mask].astype(np.float32)
 
 
 def map_to_parents(

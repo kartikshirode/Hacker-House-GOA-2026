@@ -47,6 +47,15 @@ def test_low_groundedness_blocked_high_allowed():
     assert not bad.allowed and bad.score == 0.1
 
 
+def test_devanagari_query_skips_english_classifier():
+    def never_called(request):
+        raise AssertionError("classifier ran on hindi text")
+
+    verdict = client_with(never_called).check_input("निगम क्या है")
+    assert verdict.allowed and not verdict.checked
+    assert verdict.reason == "injection_guard_english_only"
+
+
 def test_service_down_fails_open_marked_unchecked():
     def boom(request):
         raise httpx.ConnectError("down")

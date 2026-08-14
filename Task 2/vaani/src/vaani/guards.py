@@ -14,8 +14,12 @@ trace so an ungraded answer is never silently presented as graded.
 
 from __future__ import annotations
 
+import re
+
 import httpx
 from pydantic import BaseModel
+
+_DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 
 
 class GuardVerdict(BaseModel):
@@ -42,6 +46,11 @@ class GuardClient:
             return GuardVerdict(allowed=False, reason="empty_query", checked=True)
         if self.base_url is None:
             return GuardVerdict(allowed=True, reason="stub")
+        if _DEVANAGARI.search(query):
+            # the injection classifier is english-trained and flags over
+            # half of real hindi queries as attacks; stepping aside beats
+            # refusing legitimate questions, and the verdict says so
+            return GuardVerdict(allowed=True, reason="injection_guard_english_only")
         try:
             data = self.client.post(
                 f"{self.base_url}/classify_input", json={"text": query}

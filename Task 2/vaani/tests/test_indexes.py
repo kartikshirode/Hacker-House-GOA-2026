@@ -44,6 +44,13 @@ def test_lexical_index_roundtrip(tmp_path):
     assert scores[0] > 0
 
 
+def test_lexical_devanagari_query_returns_empty(tmp_path):
+    LexicalIndex.build(["the corporation is a legal entity"], tmp_path)
+    idx = LexicalIndex.load(tmp_path)
+    ids, scores = idx.search("निगम क्या है", k=2)
+    assert len(ids) == 0 and len(scores) == 0
+
+
 def test_map_to_parents_dedups_keeping_best():
     child_ids = np.array([10, 11, 12, 13])
     child_scores = np.array([0.9, 0.8, 0.7, 0.6], dtype=np.float32)
