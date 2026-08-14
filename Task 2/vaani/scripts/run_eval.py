@@ -56,6 +56,8 @@ def main() -> None:
     ap.add_argument("--abstain-threshold", type=float, default=0.85)
     ap.add_argument("--generation-url", default=None,
                     help="openai-compatible endpoint; omit for extractive answers")
+    ap.add_argument("--guard-url", default=None,
+                    help="guard sidecar endpoint; omit for permissive stubs")
     args = ap.parse_args()
 
     corpus = Path(args.corpus)
@@ -64,6 +66,7 @@ def main() -> None:
         corpus_dir=str(corpus), index_root=args.indexes, k=args.k,
         abstain_threshold=args.abstain_threshold, strategies=strategies,
         generation_url=args.generation_url,
+        guard_url=args.guard_url,
     ))
     pipeline = build_text_pipeline(runtime)
     queries, qrels = load_eval_queries(corpus, args.n)

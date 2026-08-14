@@ -13,7 +13,8 @@ vllm_url = Path("vllm_host.txt").read_text(encoding="utf-8").strip()
 guard_url = Path("guard_host.txt").read_text(encoding="utf-8").strip()
 print("vllm:", vllm_url, " guards:", guard_url)
 
-client = GenerationClient(base_url=vllm_url, timeout_s=10.0)
+client = GenerationClient(base_url=vllm_url, model="auto", timeout_s=10.0)
+print("model:", client.model)
 hits = [
     Hit(passage_id="p1", score=0.9, eng_text=(
         "A corporation is a company or group of people authorized to act as "

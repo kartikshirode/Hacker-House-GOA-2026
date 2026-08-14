@@ -34,7 +34,7 @@ class PipelineConfig(BaseModel):
     device: str | None = None
     # None disables generation and the extractive path answers directly
     generation_url: str | None = None
-    generation_model: str = "Qwen/Qwen3-1.7B"
+    generation_model: str = "auto"  # resolved from the serving endpoint
     generation_timeout_ms: float = 150.0
     # None runs the permissive guard stubs
     guard_url: str | None = None

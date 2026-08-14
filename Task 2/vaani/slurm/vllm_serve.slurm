@@ -27,9 +27,10 @@ export VLLM_USE_FLASHINFER_SAMPLER=0
 echo "http://$(hostname):8001/v1" > vllm_host.txt
 echo "http://$(hostname):8002" > guard_host.txt
 
-# guard sidecar shares the slice; both models together are tiny
+# guard sidecar shares the slice; both models together are tiny.
+# it runs in guard-env: hhem's remote code needs transformers 4.x
 PYTHONPATH=src VAANI_GUARD_DEVICE=cuda HF_HUB_OFFLINE=1 \
-  ~/vllm-env/bin/python -m uvicorn vaani.guard_service:app \
+  ~/guard-env/bin/python -m uvicorn vaani.guard_service:app \
   --host 0.0.0.0 --port 8002 > slurm/guards-$SLURM_JOB_ID.log 2>&1 &
 
 exec ~/vllm-env/bin/vllm serve "${VAANI_LLM:-Qwen/Qwen3-1.7B}" \
