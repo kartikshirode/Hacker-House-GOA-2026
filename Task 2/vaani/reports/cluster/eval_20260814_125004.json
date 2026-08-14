@@ -1,0 +1,78 @@
+{
+  "config": {
+    "corpus": "data/corpus/hin_val",
+    "indexes": "indexes/hin_val",
+    "n": 1000,
+    "hindi_queries": false,
+    "strategies": "all",
+    "k": 10,
+    "abstain_threshold": 0.85
+  },
+  "retrieval": {
+    "n_answerable": 529,
+    "mrr_at_k": 0.4102,
+    "recall_at_k": 0.7413,
+    "mrr_by_query_type": {
+      "DESCRIPTION": 0.4127,
+      "ENTITY": 0.3818,
+      "LOCATION": 0.4837,
+      "NUMERIC": 0.4112,
+      "PERSON": 0.3451
+    }
+  },
+  "abstention": {
+    "n_noanswer": 471,
+    "refused_noanswer": 246,
+    "refused_answerable": 155,
+    "precision": 0.6135,
+    "recall": 0.5223
+  },
+  "latency_ms": {
+    "total": {
+      "p50": 132.6,
+      "p70": 161.7,
+      "p90": 191.52,
+      "p100": 556.79
+    },
+    "per_stage": {
+      "abstain_gate": {
+        "p50": 0.02,
+        "p70": 0.02,
+        "p90": 0.03,
+        "p100": 373.09
+      },
+      "answer": {
+        "p50": 81.8,
+        "p70": 107.81,
+        "p90": 148.55,
+        "p100": 152.83
+      },
+      "embed_query": {
+        "p50": 35.64,
+        "p70": 36.24,
+        "p90": 37.51,
+        "p100": 422.88
+      },
+      "guard_input": {
+        "p50": 0.03,
+        "p70": 0.03,
+        "p90": 0.04,
+        "p100": 4.35
+      },
+      "guard_output": {
+        "p50": 20.48,
+        "p70": 20.76,
+        "p90": 21.34,
+        "p100": 40.2
+      },
+      "retrieve": {
+        "p50": 3.35,
+        "p70": 3.48,
+        "p90": 3.78,
+        "p100": 5.69
+      }
+    },
+    "wall_seconds": 126.1,
+    "qps": 7.9
+  }
+}
