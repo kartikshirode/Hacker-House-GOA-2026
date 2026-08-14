@@ -109,6 +109,7 @@ def create_default_app() -> FastAPI:
         corpus_dir=os.environ.get("VAANI_CORPUS", "data/subset/hin_val_100k"),
         index_root=os.environ.get("VAANI_INDEXES", "indexes/hin_val_100k"),
         generation_url=os.environ.get("VAANI_GENERATION_URL") or None,
+        guard_url=os.environ.get("VAANI_GUARD_URL") or None,
         device=os.environ.get("VAANI_DEVICE") or None,
     ))
     pipeline = build_text_pipeline(runtime)

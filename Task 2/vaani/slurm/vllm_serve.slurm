@@ -13,8 +13,15 @@
 cd ~/vaani
 export HF_HUB_OFFLINE=1
 echo "http://$(hostname):8001/v1" > vllm_host.txt
+echo "http://$(hostname):8002" > guard_host.txt
+
+# guard sidecar shares the slice; both models together are tiny
+PYTHONPATH=src VAANI_GUARD_DEVICE=cuda HF_HUB_OFFLINE=1 \
+  ~/vllm-env/bin/python -m uvicorn vaani.guard_service:app \
+  --host 0.0.0.0 --port 8002 > slurm/guards-$SLURM_JOB_ID.log 2>&1 &
+
 exec ~/vllm-env/bin/vllm serve Qwen/Qwen3-1.7B \
   --host 0.0.0.0 --port 8001 \
   --max-model-len 2048 \
-  --gpu-memory-utilization 0.85 \
+  --gpu-memory-utilization 0.75 \
   --max-num-seqs 16

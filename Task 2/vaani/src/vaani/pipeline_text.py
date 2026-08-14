@@ -10,8 +10,11 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from vaani import answer_extractive, answer_generative, guards
+from concurrent.futures import ThreadPoolExecutor
+
+from vaani import answer_extractive, answer_generative
 from vaani.answer_generative import GenerationClient
+from vaani.guards import GuardClient
 from vaani.embed import DEFAULT_MODEL, Embedder
 from vaani.harness import Pipeline, Refusal, Stage
 from vaani.retriever import Retriever
@@ -33,6 +36,9 @@ class PipelineConfig(BaseModel):
     generation_url: str | None = None
     generation_model: str = "Qwen/Qwen3-1.7B"
     generation_timeout_ms: float = 150.0
+    # None runs the permissive guard stubs
+    guard_url: str | None = None
+    groundedness_threshold: float = 0.5
 
 
 class Runtime:
@@ -50,6 +56,11 @@ class Runtime:
                 model=cfg.generation_model,
                 timeout_s=cfg.generation_timeout_ms / 1000.0,
             )
+        self.guards = GuardClient(
+            cfg.guard_url, groundedness_threshold=cfg.groundedness_threshold
+        )
+        # input guard overlaps with embed + retrieve on this pool
+        self.guard_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="guard")
         # first encode pays model warmup; do it here, not on a request
         self.embedder.encode_queries(["warmup"])
 
@@ -58,10 +69,14 @@ def build_text_pipeline(runtime: Runtime) -> Pipeline:
     cfg = runtime.cfg
 
     def guard_input(ctx):
-        verdict = guards.check_input(ctx["query"])
-        if not verdict.allowed:
-            return Refusal(reason_code="unsafe_input", message=verdict.reason)
-        return {"guard_input": verdict}
+        query = ctx["query"]
+        if not query or not query.strip():
+            return Refusal(reason_code="unsafe_input", message="empty_query")
+        # fire the classifier now, join it at the abstain gate; the check
+        # rides along with embed + retrieve instead of adding wall time
+        return {"guard_future": runtime.guard_pool.submit(
+            runtime.guards.check_input, query
+        )}
 
     def embed_query(ctx):
         vec = runtime.embedder.encode_queries([ctx["query"]])[0]
@@ -74,6 +89,10 @@ def build_text_pipeline(runtime: Runtime) -> Pipeline:
         return {"retrieval": result}
 
     def abstain_gate(ctx):
+        verdict = ctx["guard_future"].result(timeout=0.5)
+        ctx["guard_input"] = verdict
+        if not verdict.allowed:
+            return Refusal(reason_code="unsafe_input", message=verdict.reason)
         r = ctx["retrieval"]
         dense = [
             v for name, v in r.strategy_top_scores.items() if name.endswith("_dense")
@@ -110,10 +129,17 @@ def build_text_pipeline(runtime: Runtime) -> Pipeline:
 
     def guard_output(ctx):
         payload = ctx["answer"]
+        if payload.kind == "extractive":
+            # verbatim corpus text is grounded by construction
+            return {}
         context = [h.eng_text for h in ctx["retrieval"].hits[:3]]
-        verdict = guards.check_output(payload.text, context)
+        verdict = runtime.guards.check_output(payload.text, context)
+        ctx["guard_output"] = verdict
         if not verdict.allowed:
-            return Refusal(reason_code="ungrounded_answer", message=verdict.reason)
+            return Refusal(
+                reason_code="ungrounded_answer",
+                message=f"hhem={verdict.score}",
+            )
         return {}
 
     return Pipeline([
