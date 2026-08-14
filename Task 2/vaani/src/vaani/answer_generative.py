@@ -25,7 +25,7 @@ _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 
 SYSTEM_PROMPT = (
     "You answer questions using ONLY the numbered context passages. "
-    "Reply with the answer alone, one or two short sentences, in the same "
+    "Reply with the answer alone, one short sentence, in the same "
     f"language as the question. If the passages do not contain the answer, reply exactly {NO_ANSWER_TOKEN}."
 )
 
@@ -47,7 +47,7 @@ class GenerationClient:
         base_url: str = "http://127.0.0.1:8001/v1",
         model: str = "Qwen/Qwen3-1.7B",
         timeout_s: float = 2.0,
-        max_tokens: int = 96,
+        max_tokens: int = 60,
         client: httpx.Client | None = None,
     ):
         self.base_url = base_url.rstrip("/")
