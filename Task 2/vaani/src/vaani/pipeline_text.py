@@ -36,6 +36,12 @@ class PipelineConfig(BaseModel):
     generation_url: str | None = None
     generation_model: str = "auto"  # resolved from the serving endpoint
     generation_timeout_ms: float = 150.0
+    # Stage deadlines were tuned on the GPU rig where embed is ~1ms. On a
+    # CPU host embed is ~9ms idle and 60-80ms under concurrency, so the
+    # 50ms default turns every concurrent request into a refusal. These
+    # are configurable so the deadline can match the hardware.
+    embed_timeout_ms: float = 50.0
+    retrieve_timeout_ms: float = 100.0
     # None runs the permissive guard stubs
     guard_url: str | None = None
     groundedness_threshold: float = 0.5
@@ -141,6 +147,10 @@ def build_text_pipeline(runtime: Runtime) -> Pipeline:
             v for name, v in r.strategy_top_scores.items() if name.endswith("_dense")
         ]
         signal = max(dense) if dense else r.confidence
+        # the UI shows this: it is the one number the answer/refuse call
+        # turns on, and a demo that hides it is asking to be trusted
+        ctx["retrieval_signal"] = signal
+        ctx["abstain_threshold"] = cfg.abstain_threshold
         if not r.hits or signal < cfg.abstain_threshold:
             return Refusal(
                 reason_code="low_confidence",
@@ -200,8 +210,8 @@ def build_text_pipeline(runtime: Runtime) -> Pipeline:
 
     return Pipeline([
         Stage("guard_input", guard_input),
-        Stage("embed_query", embed_query, timeout_ms=50),
-        Stage("retrieve", retrieve, timeout_ms=100),
+        Stage("embed_query", embed_query, timeout_ms=cfg.embed_timeout_ms),
+        Stage("retrieve", retrieve, timeout_ms=cfg.retrieve_timeout_ms),
         Stage("abstain_gate", abstain_gate),
         answer_stage,
         Stage("guard_output", guard_output, timeout_ms=40,

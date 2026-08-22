@@ -71,7 +71,40 @@ def test_voice_empty_transcript_refuses_without_pipeline():
 
 
 def test_health():
-    assert make_client().get("/healthz").json() == {"ok": True}
+    # FakeSTT carries no .mock attribute, so it counts as a real transcriber
+    assert make_client().get("/healthz").json() == {
+        "ok": True, "corpus": {}, "voice": True, "streaming": False,
+        "stt_budget_left": None,
+    }
+
+
+def test_health_reports_the_corpus_the_app_is_actually_serving():
+    """The status strip prints these; reading them off the running app is
+    what stops the page advertising a corpus it does not have loaded."""
+    stats = {"passages": 100000, "strategies": ["passage_bm25", "passage_dense"],
+             "generation": False, "guards": False}
+    body = make_client(corpus=stats).get("/healthz").json()
+    assert body["corpus"] == stats
+
+
+def test_health_reports_no_voice_once_the_stt_budget_is_gone():
+    """A spent budget is as good as no voice to the caller: the mic greys
+    out on the same flag instead of failing on tap."""
+    stt = FakeSTT()
+    stt.budget_left = lambda: 0.0
+    body = make_client(stt=stt).get("/healthz").json()
+    assert body["voice"] is False
+    assert body["stt_budget_left"] == 0.0
+
+
+def test_health_reports_mocked_stt_as_no_voice():
+    """The UI greys out the mic on this flag. A mocked STT answers
+    /api/voice with a canned transcript the pipeline then answers in
+    earnest, so it must never advertise itself as working voice."""
+    stt = FakeSTT()
+    stt.mock = True
+    body = make_client(stt=stt).get("/healthz").json()
+    assert body["voice"] is False
 
 
 class FakeSession:

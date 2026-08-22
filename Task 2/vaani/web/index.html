@@ -4,282 +4,513 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>वाणी Vaani</title>
+<meta name="description" content="Voice question answering over MSMARCO-XI. Every answer shows the passage it came from and the time each pipeline stage took.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Tiro+Devanagari+Hindi:ital@0;1&family=Albert+Sans:wght@400;500;600&family=Spline+Sans+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Tiro+Devanagari+Hindi:ital@0;1&family=Albert+Sans:wght@400;500;600&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+  /* Locked to light on purpose. The brief was "it is too black, make it
+     white and black", so honouring prefers-color-scheme: dark would undo
+     the request for a large share of viewers. color-scheme keeps the UA
+     from dark-styling the input and scrollbars underneath us. */
   :root {
-    --ink: #14161f;
-    --ink-raised: #1c1f2b;
-    --chalk: #e9e6dc;
-    --slate: #7a8095;
-    --marigold: #f2b234;
-    --marigold-deep: #c8871c;
-    --line: #2a2e3d;
+    color-scheme: light;
+
+    --paper:      #fcfcfa;
+    --panel:      #ffffff;
+    --sunk:       #f4f4f1;
+    --ink:        #17171b;
+    --ink-2:      #5a5a63;
+    --ink-3:      #91919b;
+    --rule:       #e6e6e1;
+    --rule-2:     #cecec8;
+    /* the one accent, sampled from hhgoa.com. 7.0:1 on paper, so it is
+       safe for text and for white-on-green buttons alike */
+    --goa:        #0b6839;
+    --goa-sunk:   #f0f5f2;
+
+    /* One radius scale: 4px everywhere. The mic is the single exception
+       and it is a full circle, because it is the only thing you press to
+       speak. That is the whole shape system. */
+    --r: 4px;
+
+    --mono: "Spline Sans Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: "Albert Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
   }
+
   * { box-sizing: border-box; margin: 0; }
-  html, body { height: 100%; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
   body {
-    background: var(--ink);
-    color: var(--chalk);
-    font-family: "Albert Sans", system-ui, sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100dvh;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    padding: 24px 16px 48px;
   }
+
+  .wrap { width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---- header ------------------------------------------------------ */
   header {
-    width: 100%;
-    max-width: 640px;
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    padding-bottom: 8px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--panel);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .header-in {
+    height: 68px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 24px;
   }
   .wordmark {
     font-family: "Tiro Devanagari Hindi", serif;
-    font-size: 1.5rem;
-    letter-spacing: 0.01em;
+    font-size: 23px; letter-spacing: .01em; white-space: nowrap;
+    color: var(--goa);
   }
-  .wordmark .latin { color: var(--slate); font-size: 1rem; margin-left: 6px; }
-  .corpus-tag {
-    font-family: "Spline Sans Mono", monospace;
-    font-size: 0.7rem;
-    color: var(--slate);
+  .wordmark .latin {
+    font-family: var(--sans);
+    font-size: 12px; font-weight: 500; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--ink-3);
+    margin-left: 10px; vertical-align: 3px;
   }
-  main { width: 100%; max-width: 640px; display: flex; flex-direction: column; gap: 20px; }
+  /* Live system facts, read from /healthz so the page cannot advertise a
+     corpus or a capability the running backend does not have. */
+  .status { display: flex; gap: 26px; font-family: var(--mono); font-size: 11.5px; }
+  .status div { display: flex; flex-direction: column; gap: 3px; }
+  .status dt { color: var(--ink-3); letter-spacing: .06em; text-transform: uppercase; font-size: 10px; }
+  .status dd { color: var(--ink); font-variant-numeric: tabular-nums; font-weight: 500; }
+  .status .off { color: var(--ink-3); }
 
-  .stage-area {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
-    padding: 40px 0 8px;
+  /* ---- ask bar ----------------------------------------------------- */
+  /* main carries .wrap, whose padding: 0 24px outranks a bare element
+     selector, which is why the ask bar used to sit hard against the
+     header rule */
+  main.wrap { flex: 1; padding: 40px 24px 64px; }
+
+  .ask {
+    display: flex; align-items: center; gap: 14px;
+    padding-bottom: 22px; border-bottom: 1px solid var(--rule);
   }
   #mic {
-    width: 92px; height: 92px;
-    border-radius: 50%;
-    border: 1px solid var(--line);
-    background: var(--ink-raised);
-    color: var(--marigold);
-    cursor: pointer;
-    display: grid;
-    place-items: center;
-    transition: transform 120ms ease, border-color 120ms ease;
+    flex: none;
+    width: 52px; height: 52px; border-radius: 50%;
+    border: 1px solid var(--rule-2); background: var(--panel);
+    color: var(--ink); cursor: pointer;
+    display: grid; place-items: center;
+    transition: background .18s var(--ease), border-color .18s var(--ease), transform .12s var(--ease);
   }
-  #mic:hover { border-color: var(--marigold-deep); }
-  #mic:focus-visible { outline: 2px solid var(--marigold); outline-offset: 3px; }
-  #mic.recording { border-color: var(--marigold); transform: scale(1.06); }
-  #mic svg { width: 34px; height: 34px; }
-  .hint {
-    color: var(--slate);
-    font-size: 0.85rem;
-    min-height: 1.2em;
-  }
+  #mic svg { width: 21px; height: 21px; }
+  #mic:hover:not(:disabled) { border-color: var(--goa); }
+  #mic:active:not(:disabled) { transform: scale(.96); }
+  #mic:focus-visible { outline: 2px solid var(--goa); outline-offset: 3px; }
+  #mic.recording { background: var(--goa); border-color: var(--goa); color: #fff; }
+  #mic:disabled { cursor: not-allowed; color: var(--ink-3); border-color: var(--rule); }
 
-  /* one canvas, two lives: voice bars while recording, latency bars after */
-  #bars {
-    width: 100%;
-    max-width: 560px;
-    height: 96px;
-    display: block;
+  #textForm { flex: 1; display: flex; gap: 10px; }
+  #textInput {
+    flex: 1; min-width: 0;
+    font-family: var(--sans); font-size: 16px; color: var(--ink);
+    background: var(--panel);
+    border: 1px solid var(--rule-2); border-radius: var(--r);
+    padding: 14px 16px;
+    transition: border-color .18s var(--ease);
   }
-  .bars-legend {
-    width: 100%;
-    max-width: 560px;
-    display: none;
-    justify-content: space-between;
-    font-family: "Spline Sans Mono", monospace;
-    font-size: 0.68rem;
-    color: var(--slate);
+  #textInput::placeholder { color: var(--ink-3); }
+  #textInput:focus { outline: none; border-color: var(--goa); }
+  #textForm button {
+    flex: none;
+    font-family: var(--sans); font-size: 14px; font-weight: 600;
+    letter-spacing: .02em;
+    color: #fff; background: var(--goa);
+    border: 1px solid var(--goa); border-radius: var(--r);
+    padding: 0 26px; cursor: pointer; white-space: nowrap;
+    transition: opacity .18s var(--ease), transform .12s var(--ease);
   }
-  .bars-legend.visible { display: flex; flex-wrap: wrap; gap: 4px 14px; }
-  .bars-legend b { color: var(--chalk); font-weight: 500; }
+  #textForm button:hover { opacity: .84; }
+  #textForm button:active { transform: translateY(1px); }
+  #textForm button:focus-visible { outline: 2px solid var(--goa); outline-offset: 2px; }
+
+  .hint {
+    font-size: 13px; color: var(--ink-2);
+    padding: 12px 0 0; min-height: 20px;
+  }
+  #bars { display: block; width: 100%; max-width: 320px; height: 34px; margin-top: 10px; }
+  #bars.idle { display: none; }
+
+  /* three questions the corpus can answer, so a first visit does not
+     open on a refusal */
+  .examples {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin-top: 14px; font-size: 12.5px; color: var(--ink-3);
+  }
+  .examples button {
+    font-family: var(--sans); font-size: 12.5px; color: var(--ink-2);
+    background: var(--panel); border: 1px solid var(--rule-2); border-radius: var(--r);
+    padding: 5px 11px; cursor: pointer;
+    transition: border-color .18s var(--ease), color .18s var(--ease);
+  }
+  .examples button:hover { border-color: var(--goa); color: var(--goa); }
+  .examples button:focus-visible { outline: 2px solid var(--goa); outline-offset: 2px; }
+
+  /* ---- two column: answer left, instrument right -------------------- */
+  .split {
+    display: grid; grid-template-columns: 1fr; gap: 34px;
+    padding-top: 30px;
+  }
+  @media (min-width: 900px) {
+    .split { grid-template-columns: minmax(0, 1.32fr) minmax(0, 1fr); gap: 48px; }
+  }
 
   .transcript {
-    min-height: 1.4em;
-    text-align: center;
-    font-size: 1.05rem;
+    font-size: 14px; color: var(--ink-2); font-family: var(--mono);
+    min-height: 20px; margin-bottom: 14px;
   }
-  .transcript.partial { color: var(--slate); font-style: italic; }
+  .transcript.partial { color: var(--ink-3); font-style: italic; }
 
-  .answer-card {
-    background: var(--ink-raised);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 18px 20px;
-    display: none;
-    flex-direction: column;
-    gap: 10px;
+  /* No card. A left rule carries the hierarchy, which keeps the answer
+     feeling like text rather than a widget. */
+  .answer-card { border-left: 2px solid var(--goa); padding-left: 20px; display: none; }
+  .answer-card.visible { display: block; }
+  .answer-card.refused { border-left-color: var(--rule-2); }
+  .eyebrow {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 500;
+    letter-spacing: .13em; text-transform: uppercase;
+    color: var(--ink-3); margin-bottom: 11px;
   }
-  .answer-card.visible { display: flex; }
-  .answer-card .eyebrow {
-    font-family: "Spline Sans Mono", monospace;
-    font-size: 0.68rem;
-    color: var(--slate);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-  .answer-card.refused .eyebrow { color: var(--marigold); }
-  .answer-text { font-size: 1.08rem; line-height: 1.55; }
-  .sources { display: flex; gap: 6px; flex-wrap: wrap; }
+  .answer-text { font-size: 19px; line-height: 1.58; max-width: 62ch; }
+  .answer-card.refused .answer-text { color: var(--ink-2); font-size: 17px; }
+  .sources { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 16px; }
+  .sources:empty { display: none; }
   .chip {
-    font-family: "Spline Sans Mono", monospace;
-    font-size: 0.65rem;
-    color: var(--marigold);
-    border: 1px solid var(--marigold-deep);
-    border-radius: 999px;
-    padding: 2px 8px;
+    font-family: var(--mono); font-size: 11px; color: var(--ink-2);
+    border: 1px solid var(--rule-2); border-radius: var(--r);
+    padding: 3px 8px; background: var(--goa-sunk);
   }
   .total-line {
-    font-family: "Spline Sans Mono", monospace;
-    font-size: 0.8rem;
-    color: var(--slate);
+    font-family: var(--mono); font-size: 11.5px; color: var(--ink-3);
+    margin-top: 14px; font-variant-numeric: tabular-nums;
   }
-  .total-line b { color: var(--marigold); font-weight: 500; }
+  .total-line b { color: var(--ink); font-weight: 600; }
 
-  .text-mode {
-    display: flex;
-    gap: 8px;
-    opacity: 0.75;
+  .empty {
+    font-size: 16px; line-height: 1.6; color: var(--ink-2);
+    max-width: 46ch;
   }
-  .text-mode input {
-    flex: 1;
-    background: var(--ink-raised);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    color: var(--chalk);
-    padding: 10px 12px;
-    font: inherit;
+  .empty b { color: var(--ink); font-weight: 500; }
+  .empty .mode-note {
+    display: block; margin-top: 14px; padding-top: 14px;
+    border-top: 1px solid var(--rule);
+    font-size: 13.5px; color: var(--ink-3);
   }
-  .text-mode input:focus-visible { outline: 2px solid var(--marigold); outline-offset: 1px; }
-  .text-mode button {
-    background: none;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    color: var(--slate);
-    padding: 10px 14px;
-    font: inherit;
-    cursor: pointer;
+
+  /* ---- instrument panel -------------------------------------------- */
+  .panel { display: flex; flex-direction: column; gap: 26px; }
+  .panel section { display: flex; flex-direction: column; gap: 11px; }
+  .panel h2 {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 500;
+    letter-spacing: .13em; text-transform: uppercase; color: var(--ink-3);
   }
-  .text-mode button:hover { color: var(--chalk); border-color: var(--slate); }
+
+  /* confidence against the gate: a scale with a marker, not a filled
+     progress track. The gate position is the point of the graphic. */
+  .gauge { position: relative; height: 30px; }
+  .gauge-track { position: absolute; left: 0; right: 0; top: 12px; height: 1px; background: var(--rule-2); }
+  .gauge-fill { position: absolute; left: 0; top: 10px; height: 5px; background: var(--goa); }
+  .gauge-gate { position: absolute; top: 4px; width: 1px; height: 17px; background: var(--ink); z-index: 2; }
+  .gauge-fill { z-index: 1; }
+  .gauge-track + .gauge-gate::before {
+    content: ""; position: absolute; left: -1px; top: 0; width: 3px; height: 17px;
+    background: var(--panel); z-index: -1;
+  }
+  .gauge-gate::after {
+    content: "gate " attr(data-v);
+    position: absolute; top: 19px; left: 0; transform: translateX(-50%);
+    font-family: var(--mono); font-size: 9.5px; color: var(--ink-3); white-space: nowrap;
+  }
+  .gauge-val {
+    position: absolute; top: -3px; font-family: var(--mono); font-size: 11.5px;
+    font-weight: 600; transform: translateX(-50%); font-variant-numeric: tabular-nums;
+    background: var(--panel); padding: 0 4px; z-index: 3; border-radius: 2px;
+  }
+
+  /* stage rows: name, proportional rule, duration */
+  .stages { display: flex; flex-direction: column; }
+  .stage {
+    display: grid; grid-template-columns: 92px 1fr 58px;
+    align-items: center; gap: 10px;
+    padding: 6px 0; border-bottom: 1px solid var(--rule);
+    font-family: var(--mono); font-size: 11.5px;
+  }
+  .stages .stage:last-child { border-bottom: 0; }
+  .stage-name { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stage-bar-wrap { height: 6px; background: var(--sunk); border-radius: 1px; overflow: hidden; }
+  .stage.skipped .stage-bar-wrap:empty { background: var(--sunk); opacity: .55; }
+  .stage-bar {
+    height: 100%; background: var(--ink); transform-origin: left center;
+    transform: scaleX(var(--s, 1));
+  }
+  .stage-ms { text-align: right; font-variant-numeric: tabular-nums; font-weight: 500; }
+  .stage.skipped .stage-bar { background: var(--rule-2); }
+  .stage.skipped .stage-name, .stage.skipped .stage-ms { color: var(--ink-3); }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .stage-bar { animation: grow .34s var(--ease) both; animation-delay: var(--d, 0ms); }
+    @keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(var(--s, 1)); } }
+    .answer-card.visible { animation: rise .34s var(--ease) both; }
+    @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  }
+
+  .kv { display: flex; flex-direction: column; gap: 7px; font-family: var(--mono); font-size: 11.5px; }
+  .kv .row { display: flex; justify-content: space-between; gap: 14px; }
+  .kv .k { color: var(--ink-3); }
+  .kv .v { color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
+  .kv .v.muted { color: var(--ink-3); }
+
   footer {
-    margin-top: auto;
-    padding-top: 32px;
-    font-size: 0.72rem;
-    color: var(--slate);
+    border-top: 1px solid var(--rule);
+    padding: 20px 0; font-size: 12.5px; color: var(--ink-3);
   }
-  @media (prefers-reduced-motion: reduce) {
-    #mic { transition: none; }
+  footer a { color: var(--ink-2); }
+  footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; }
+  .foot-links { display: flex; gap: 18px; white-space: nowrap; }
+  .foot-links a { color: var(--goa); text-decoration: none; border-bottom: 1px solid var(--rule-2); }
+  .foot-links a:hover { border-bottom-color: var(--goa); }
+
+  @media (max-width: 620px) {
+    .status { gap: 16px; }
+    .status .hide-sm { display: none; }
+    .header-in { height: 60px; }
+    main.wrap { padding: 22px 18px 48px; }
+    /* mic, box and button on one row; a lone mic above the box read as
+       a detached control */
+    .ask { gap: 10px; }
+    #mic { width: 46px; height: 46px; }
+    #textForm { gap: 8px; }
+    #textInput { padding: 12px 12px; }
+    #textForm button { padding: 0 14px; }
+    .split { gap: 28px; padding-top: 24px; }
+    .answer-text { font-size: 17px; }
   }
 </style>
 </head>
 <body>
+
 <header>
-  <div class="wordmark">वाणी<span class="latin">vaani</span></div>
-  <div class="corpus-tag">MSMARCO-XI · hindi + english</div>
+  <div class="wrap header-in">
+    <div class="wordmark">वाणी<span class="latin">vaani</span></div>
+    <dl class="status" id="status"></dl>
+  </div>
 </header>
 
-<main>
-  <div class="stage-area">
-    <button id="mic" aria-label="Hold a question: tap, speak, tap again">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+<main class="wrap">
+  <div class="ask">
+    <button id="mic" aria-label="Ask by voice: tap, speak, tap again">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
         <rect x="9" y="3" width="6" height="11" rx="3"/>
         <path d="M5 11a7 7 0 0 0 14 0"/>
         <path d="M12 18v3"/>
       </svg>
     </button>
-    <div class="hint" id="hint">Tap the mic, ask in Hindi or English, tap again to finish</div>
-    <canvas id="bars" width="560" height="96" aria-hidden="true"></canvas>
-    <div class="bars-legend" id="legend"></div>
+    <form id="textForm">
+      <input id="textInput" type="text" autocomplete="off"
+             placeholder="Ask a factual question, in Hindi or English">
+      <button type="submit">Ask</button>
+    </form>
+  </div>
+  <div class="hint" id="hint">Tap the mic and speak, or type a question.</div>
+  <canvas id="bars" class="idle" width="640" height="68" aria-hidden="true"></canvas>
+  <div class="examples" id="examples" aria-label="Example questions">
+    <span>Try</span>
+    <button type="button">what is the capital of france</button>
+    <button type="button">how many bones are in the human body</button>
+    <button type="button">what is photosynthesis</button>
   </div>
 
-  <div class="transcript" id="transcript"></div>
+  <div class="split">
+    <div>
+      <div class="transcript" id="transcript"></div>
 
-  <div class="answer-card" id="card">
-    <div class="eyebrow" id="eyebrow">answer</div>
-    <div class="answer-text" id="answerText"></div>
-    <div class="sources" id="sources"></div>
-    <div class="total-line" id="totalLine"></div>
+      <div class="empty" id="empty">
+        Answers are pulled verbatim from the corpus and carry the passage
+        they came from. When retrieval confidence falls under the gate,
+        <b>vaani refuses instead of guessing</b>. The panel on the right
+        shows the timing and the confidence behind whatever it just did.
+        <span class="mode-note">This public copy runs on a CPU VM in
+        extractive mode. With generation and guards on, the same pipeline
+        measured P50 117 ms on a GPU; the benchmarks are linked in the
+        footer.</span>
+      </div>
+
+      <div class="answer-card" id="card">
+        <div class="eyebrow" id="eyebrow">answer</div>
+        <div class="answer-text" id="answerText"></div>
+        <div class="sources" id="sources"></div>
+        <div class="total-line" id="totalLine"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <section>
+        <h2>Retrieval confidence</h2>
+        <div class="gauge" id="gauge"></div>
+      </section>
+      <section>
+        <h2>Pipeline</h2>
+        <div class="stages" id="stages"></div>
+      </section>
+      <section>
+        <h2>Guards</h2>
+        <div class="kv" id="guards"></div>
+      </section>
+    </div>
   </div>
-
-  <form class="text-mode" id="textForm">
-    <input id="textInput" type="text" placeholder="Or type a question to test without voice"
-           autocomplete="off">
-    <button type="submit">Ask</button>
-  </form>
 </main>
 
-<footer>answers come only from the corpus; when nothing relevant exists, vaani says so</footer>
+<footer class="wrap">
+  <span>MSMARCO-XI, machine-translated by AI4Bharat. Non-commercial research use.</span>
+  <span class="foot-links">
+    <a href="https://github.com/kartikshirode/Hacker-House-GOA-2026/tree/main/Task%202/vaani" target="_blank" rel="noopener">source</a>
+    <a href="https://github.com/kartikshirode/Hacker-House-GOA-2026/tree/main/Task%202/vaani/reports" target="_blank" rel="noopener">GPU benchmarks</a>
+  </span>
+</footer>
 
+<script src="config.js"></script>
 <script>
+// Served from the backend this file is same-origin and API stays empty.
+// Hosted on a static host (Vercel) config.js sets window.VAANI_API to the
+// backend origin and every call below re-points without another change.
+const API = (window.VAANI_API || "").replace(/\/+$/, "");
 const mic = document.getElementById("mic");
 const hint = document.getElementById("hint");
 const barsCanvas = document.getElementById("bars");
-const legend = document.getElementById("legend");
 const transcriptEl = document.getElementById("transcript");
 const card = document.getElementById("card");
+const emptyEl = document.getElementById("empty");
 const eyebrow = document.getElementById("eyebrow");
 const answerText = document.getElementById("answerText");
 const sourcesEl = document.getElementById("sources");
 const totalLine = document.getElementById("totalLine");
+const statusEl = document.getElementById("status");
+const gaugeEl = document.getElementById("gauge");
+const stagesEl = document.getElementById("stages");
+const guardsEl = document.getElementById("guards");
 const ctx = barsCanvas.getContext("2d");
 
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 let recorder = null, chunks = [], audioCtx = null, analyser = null, rafId = null;
-let wsMode = true;   // streaming first; drops to clip mode if the server declines
+let wsMode = null;   // unknown until /healthz answers; true only when the server streams
 let session = null;  // live streaming session, null otherwise
 let streamBuf = "";
 
-// ---- live voice bars ------------------------------------------------
-function drawVoiceBars() {
-  const data = new Uint8Array(analyser.frequencyBinCount);
-  analyser.getByteFrequencyData(data);
-  const w = barsCanvas.width, h = barsCanvas.height, n = 48, gap = 3;
-  const bw = (w - gap * (n - 1)) / n;
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = css("--marigold");
-  for (let i = 0; i < n; i++) {
-    const v = data[Math.floor(i * data.length / n)] / 255;
-    const bh = Math.max(3, v * h * 0.9);
-    ctx.globalAlpha = 0.35 + v * 0.65;
-    ctx.fillRect(i * (bw + gap), h - bh, bw, bh);
+const num = n => n.toLocaleString("en-US");
+
+// ---- system strip ---------------------------------------------------
+// Everything here is read from the running backend. The page never states
+// a corpus size or a capability from a constant it could drift away from.
+function renderStatus(h) {
+  const c = h.corpus || {};
+  const cells = [];
+  if (c.passages) cells.push(["passages", num(c.passages), false, false]);
+  if (c.strategies && c.strategies.length) {
+    cells.push(["retrieval", c.strategies.join(" + "), false, true]);
   }
-  ctx.globalAlpha = 1;
-  rafId = requestAnimationFrame(drawVoiceBars);
+  cells.push(["generation", c.generation ? "on" : "extractive", !c.generation, true]);
+  cells.push(["guards", c.guards ? "on" : "stub", !c.guards, true]);
+  if (h.voice) {
+    const left = h.stt_budget_left;
+    cells.push(["voice", left == null ? "on" : "₹" + left.toFixed(2) + " left", false, false]);
+  } else {
+    cells.push(["voice", "off", true, false]);
+  }
+  statusEl.innerHTML = cells.map(([k, v, off, sm]) =>
+    `<div${sm ? ' class="hide-sm"' : ""}><dt>${k}</dt><dd class="${off ? "off" : ""}">${v}</dd></div>`
+  ).join("");
 }
 
-// ---- latency waterfall on the same canvas ---------------------------
-function drawLatency(trace) {
-  cancelAnimationFrame(rafId);
-  const w = barsCanvas.width, h = barsCanvas.height;
-  const shown = trace.filter(s => s.ms >= 0.05 || s.stage === "stt");
-  const total = shown.reduce((a, s) => a + s.ms, 0) || 1;
-  const gap = 4;
-  ctx.clearRect(0, 0, w, h);
-  legend.innerHTML = "";
-  let x = 0;
-  const maxMs = Math.max(...shown.map(s => s.ms));
-  shown.forEach((s, i) => {
-    const bw = Math.max(26, (s.ms / total) * (w - gap * (shown.length - 1)));
-    const bh = Math.max(8, (s.ms / maxMs) * h * 0.85);
-    const t = i / Math.max(1, shown.length - 1);
-    ctx.fillStyle = t < 0.5 ? css("--marigold") : css("--marigold-deep");
-    ctx.globalAlpha = 0.9 - t * 0.35;
-    ctx.fillRect(x, h - bh, bw, bh);
-    x += bw + gap;
-    const item = document.createElement("span");
-    item.innerHTML = `${s.stage} <b>${s.ms.toFixed(1)}ms</b>`;
-    legend.appendChild(item);
-  });
-  ctx.globalAlpha = 1;
-  legend.classList.add("visible");
+// ---- instrument panel ----------------------------------------------
+// Resting state. Three empty headings read as a broken panel, so before
+// the first question it shows the gate it will measure against and the
+// stages it will run. That is real information, not a placeholder.
+const STAGE_NAMES = ["guard_input", "embed_query", "retrieve",
+                     "abstain_gate", "answer", "guard_output"];
+
+function renderResting(threshold) {
+  renderGauge({ confidence: null, threshold });
+  stagesEl.innerHTML = STAGE_NAMES.map(n =>
+    `<div class="stage skipped">
+       <span class="stage-name">${n}</span>
+       <span class="stage-bar-wrap"></span>
+       <span class="stage-ms">-</span>
+     </div>`).join("");
+  guardsEl.innerHTML = [
+    ["input", "awaiting a question"], ["groundedness", "awaiting a question"],
+  ].map(([k, v]) =>
+    `<div class="row"><span class="k">${k}</span><span class="v muted">${v}</span></div>`
+  ).join("");
+}
+
+function renderGauge(r) {
+  // e5 cosines live in a narrow band, so the scale starts at 0.5 rather
+  // than 0; otherwise every reading crowds the right-hand end.
+  const lo = 0.5, hi = 1.0;
+  const pct = v => Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100));
+  const thr = (r && r.threshold != null) ? r.threshold : 0.85;
+  const g = pct(thr);
+  let html = `<div class="gauge-track"></div>` +
+    `<div class="gauge-gate" data-v="${thr.toFixed(2)}" style="left:${g}%"></div>`;
+  if (r && r.confidence != null) {
+    const c = pct(r.confidence);
+    html += `<div class="gauge-fill" style="width:${c}%"></div>` +
+      `<div class="gauge-val" style="left:${c}%">${r.confidence.toFixed(3)}</div>`;
+  }
+  gaugeEl.innerHTML = html;
+}
+
+function renderStages(trace) {
+  const maxMs = Math.max(...trace.map(s => s.ms), 0.01);
+  stagesEl.innerHTML = trace.map((s, i) => {
+    const scale = Math.max(s.ms / maxMs, 0.012);
+    const skipped = s.ms < 0.05;
+    return `<div class="stage ${skipped ? "skipped" : ""}">
+      <span class="stage-name" title="${s.stage}${s.detail ? " (" + s.detail + ")" : ""}">${s.stage}</span>
+      <span class="stage-bar-wrap"><span class="stage-bar" style="--s:${scale};--d:${reduceMotion ? 0 : i * 45}ms"></span></span>
+      <span class="stage-ms">${s.ms.toFixed(1)}</span>
+    </div>`;
+  }).join("");
+}
+
+function renderGuards(data) {
+  const g = data.guards || {};
+  const rows = [];
+  const describe = v => {
+    if (!v) return ["not run", true];
+    if (v.checked === false) return [v.reason || "unchecked", true];
+    return [v.allowed ? "pass" : "blocked", false];
+  };
+  const [inTxt, inMuted] = describe(g.input);
+  const [outTxt, outMuted] = describe(g.output);
+  rows.push(["input", inTxt, inMuted]);
+  rows.push(["groundedness", outTxt, outMuted]);
+  if (data.retrieval && data.retrieval.n_hits != null) {
+    rows.push(["hits", String(data.retrieval.n_hits), false]);
+  }
+  if (data.request_id) rows.push(["request", data.request_id.slice(0, 8), true]);
+  guardsEl.innerHTML = rows.map(([k, v, muted]) =>
+    `<div class="row"><span class="k">${k}</span><span class="v ${muted ? "muted" : ""}">${v}</span></div>`
+  ).join("");
 }
 
 // ---- render a pipeline response ------------------------------------
 function render(data) {
+  emptyEl.style.display = "none";
   card.classList.add("visible");
   sourcesEl.innerHTML = "";
   if (data.transcript !== undefined) {
@@ -288,11 +519,12 @@ function render(data) {
   }
   if (data.refused) {
     card.classList.add("refused");
-    eyebrow.textContent = "no answer · " + (data.refusal.reason_code || "refused");
+    eyebrow.textContent = "no answer / " + (data.refusal.reason_code || "refused");
     answerText.textContent = friendlyRefusal(data.refusal);
   } else {
     card.classList.remove("refused");
-    eyebrow.textContent = "answer · " + data.answer.kind;
+    eyebrow.textContent = "answer / " + data.answer.kind +
+      (data.answer.language ? " / " + data.answer.language : "");
     answerText.textContent = data.answer.text;
     (data.answer.passage_ids || []).forEach(pid => {
       const chip = document.createElement("span");
@@ -304,15 +536,18 @@ function render(data) {
   totalLine.innerHTML =
     `pipeline <b>${data.pipeline_ms}ms</b>` +
     (data.trace.some(s => s.stage === "stt")
-      ? ` · with speech <b>${data.total_ms}ms</b>` : "");
-  drawLatency(data.trace);
+      ? ` / with speech <b>${data.total_ms}ms</b>` : "");
+  renderGauge(data.retrieval);
+  renderStages(data.trace);
+  renderGuards(data);
 }
 
 function friendlyRefusal(refusal) {
   const reasons = {
-    low_confidence: "The corpus has nothing close enough to answer this. Try a factual question the web would cover.",
-    empty_transcript: "Couldn't hear a question. Tap the mic and try again.",
-    unsafe_input: "That question isn't something this system will answer.",
+    low_confidence: "Nothing in the corpus is close enough to answer this. The confidence and the gate it missed are on the right.",
+    empty_transcript: "Could not hear a question. Tap the mic and try again.",
+    unsafe_input: "That question is not something this system will answer.",
+    stt_budget: "The speech budget for this demo is spent. Type your question instead.",
   };
   return reasons[refusal.reason_code] || (refusal.message || "No answer this time.");
 }
@@ -320,15 +555,58 @@ function friendlyRefusal(refusal) {
 async function post(url, body, isForm) {
   hint.textContent = "thinking…";
   try {
-    const res = await fetch(url, isForm
+    const res = await fetch(API + url, isForm
       ? { method: "POST", body }
       : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const data = await res.json();
     render(data);
-    hint.textContent = "Tap the mic to ask another";
+    hint.textContent = "Ask another.";
   } catch {
     hint.textContent = "Server unreachable. Is the backend running?";
   }
+}
+
+// ---- live voice bars ------------------------------------------------
+function drawVoiceBars() {
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteFrequencyData(data);
+  const w = barsCanvas.width, h = barsCanvas.height, n = 56, gap = 3;
+  const bw = (w - gap * (n - 1)) / n;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = css("--ink");
+  for (let i = 0; i < n; i++) {
+    const v = data[Math.floor(i * data.length / n)] / 255;
+    const bh = Math.max(2, v * h * 0.9);
+    ctx.globalAlpha = 0.18 + v * 0.72;
+    ctx.fillRect(i * (bw + gap), h - bh, bw, bh);
+  }
+  ctx.globalAlpha = 1;
+  rafId = requestAnimationFrame(drawVoiceBars);
+}
+
+// ---- voice activity detection ---------------------------------------
+// Sarvam bills by the audio second, so silence should never leave the
+// browser. Hysteresis (a high threshold to open, a lower one to stay
+// open) plus a hangover stops the gate from chattering mid-sentence, and
+// a few pre-roll frames keep word onsets that a naive RMS gate clips.
+const VAD_OPEN = 0.008;
+const VAD_CLOSE = 0.004;
+const VAD_HANGOVER_MS = 700;
+const VAD_PREROLL_FRAMES = 3;
+
+function frameRms(f32) {
+  let sum = 0;
+  for (let i = 0; i < f32.length; i++) sum += f32[i] * f32[i];
+  return Math.sqrt(sum / f32.length);
+}
+
+function showToken(delta) {
+  streamBuf += delta;
+  emptyEl.style.display = "none";
+  card.classList.add("visible");
+  card.classList.remove("refused");
+  eyebrow.textContent = "answer / streaming";
+  answerText.textContent = streamBuf;
 }
 
 // ---- streaming voice over the websocket -----------------------------
@@ -378,26 +656,59 @@ function toPCM16(float32, fromRate) {
   return out;
 }
 
-function showToken(delta) {
-  streamBuf += delta;
-  card.classList.add("visible");
-  card.classList.remove("refused");
-  eyebrow.textContent = "answer · live";
-  answerText.textContent = streamBuf;
-}
-
 async function startStreaming(stream, onUnavailable) {
-  const scheme = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${scheme}://${location.host}/ws/voice`);
+  const origin = API || `${location.protocol}//${location.host}`;
+  const ws = new WebSocket(origin.replace(/^http/, "ws") + "/ws/voice");
   ws.binaryType = "arraybuffer";
+
+  // The server may answer the moment the socket opens; with realtime stt
+  // off it sends an error in the same read as the open frame. A handler
+  // attached after the worklet load below misses it, the close that
+  // follows silently resets the mic, and the page never learns to stop
+  // trying the socket. So messages go through `handle` from the first
+  // instant, and until the worklet is wired its only job is to remember
+  // a refusal.
+  let serverError = null;
+  let handle = msg => { if (msg.type === "error") serverError = msg.message || "refused"; };
+  ws.onmessage = e => { try { handle(JSON.parse(e.data)); } catch {} };
   await new Promise((ok, no) => { ws.onopen = ok; ws.onerror = no; });
 
   const workletUrl = URL.createObjectURL(new Blob([WORKLET_SRC], { type: "text/javascript" }));
   await audioCtx.audioWorklet.addModule(workletUrl);
+  if (serverError || ws.readyState !== WebSocket.OPEN) {
+    // declined before any audio moved: hand the same live stream back to
+    // the caller, which falls through to the clip path
+    ws.close();
+    throw new Error(serverError || "socket closed before streaming started");
+  }
   const node = new AudioWorkletNode(audioCtx, "pcm-forwarder");
   const sampleRate = audioCtx.sampleRate;
+  let speaking = false;
+  let lastVoiceAt = 0;
+  let preroll = [];
+  let sentAny = false;   // did the gate ever open during this utterance
   node.port.onmessage = e => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(toPCM16(e.data, sampleRate).buffer);
+    if (ws.readyState !== WebSocket.OPEN) return;
+    const rms = frameRms(e.data);
+    const pcm = toPCM16(e.data, sampleRate);
+    const now = performance.now();
+    if (rms > VAD_OPEN) {
+      speaking = true;
+      lastVoiceAt = now;
+    } else if (speaking && rms > VAD_CLOSE) {
+      lastVoiceAt = now;
+    } else if (speaking && now - lastVoiceAt > VAD_HANGOVER_MS) {
+      speaking = false;
+    }
+    if (!speaking) {
+      preroll.push(pcm);
+      if (preroll.length > VAD_PREROLL_FRAMES) preroll.shift();
+      return;
+    }
+    for (const p of preroll) ws.send(p.buffer);
+    preroll = [];
+    ws.send(pcm.buffer);
+    sentAny = true;
   };
   audioCtx.createMediaStreamSource(stream).connect(node);
 
@@ -405,6 +716,7 @@ async function startStreaming(stream, onUnavailable) {
   let gotResult = false;
   let stopped = false;
   let finished = false;
+  let outcome = null;   // "result" | "error" | "silent", null while undecided
 
   // idempotent: runs once no matter which path gets here first, so the
   // mic never stays hot after a result, an error or a dropped socket
@@ -415,11 +727,11 @@ async function startStreaming(stream, onUnavailable) {
     stream.getTracks().forEach(t => t.stop());
     audioCtx.close();
     mic.classList.remove("recording");
+    barsCanvas.classList.add("idle");
     cancelAnimationFrame(rafId);
   };
 
-  ws.onmessage = e => {
-    const msg = JSON.parse(e.data);
+  handle = msg => {
     if (msg.type === "partial") {
       transcriptEl.textContent = msg.text;
       transcriptEl.classList.add("partial");
@@ -431,13 +743,15 @@ async function startStreaming(stream, onUnavailable) {
       showToken(msg.text);
     } else if (msg.type === "result") {
       gotResult = true;
+      outcome = "result";
       streamBuf = "";
       finish();
       render(msg);
-      hint.textContent = "Tap the mic to ask another";
+      hint.textContent = "Ask another.";
       ws.close();
       session = null;
     } else if (msg.type === "error") {
+      outcome = "error";
       wsMode = false;
       finish();
       ws.close();
@@ -448,12 +762,26 @@ async function startStreaming(stream, onUnavailable) {
   ws.onclose = () => {
     finish();
     session = null;
-    if (!gotResult && wsMode && stopped) hint.textContent = "Tap the mic to try again";
+    // a socket that ends with no verdict has to say so, or the mic just
+    // goes idle under a hint that still reads "Listening"
+    if (!outcome) hint.textContent = stopped
+      ? "No answer came back. Tap the mic to try again."
+      : "The stream dropped. Tap the mic to try again.";
   };
 
   return {
     stop() {
       stopped = true;
+      if (!sentAny) {
+        // the gate never opened, so nothing was streamed. Waiting on a
+        // transcript that cannot arrive is what makes the mic look dead.
+        outcome = "silent";
+        finish();
+        ws.close();
+        session = null;
+        hint.textContent = "Did not hear anything. Speak a little louder, or type instead.";
+        return;
+      }
       // let the worklet flush its partial tail through the still-open
       // socket before the tracks die, then clean up
       node.port.postMessage("flush");
@@ -470,11 +798,34 @@ function startClip(stream) {
   chunks = [];
   recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
   recorder.ondataavailable = e => chunks.push(e.data);
+
+  // A clip with nothing in it still costs a Sarvam call and comes back
+  // empty, so watch the level and don't send one that never had speech.
+  let sawSpeech = false;
+  const vadBytes = new Uint8Array(analyser.fftSize);
+  const vadTimer = setInterval(() => {
+    analyser.getByteTimeDomainData(vadBytes);
+    let sum = 0;
+    for (let i = 0; i < vadBytes.length; i++) {
+      const v = (vadBytes[i] - 128) / 128;
+      sum += v * v;
+    }
+    if (Math.sqrt(sum / vadBytes.length) > VAD_OPEN) sawSpeech = true;
+  }, 100);
+
   recorder.onstop = () => {
+    clearInterval(vadTimer);
     stream.getTracks().forEach(t => t.stop());
     audioCtx.close();
     mic.classList.remove("recording");
+    barsCanvas.classList.add("idle");
     cancelAnimationFrame(rafId);
+    if (!sawSpeech) {
+      transcriptEl.textContent = "";
+      transcriptEl.classList.remove("partial");
+      hint.textContent = "Did not hear anything. Tap the mic and speak.";
+      return;
+    }
     const blob = new Blob(chunks, { type: "audio/webm" });
     const form = new FormData();
     form.append("file", blob, "question.webm");
@@ -489,34 +840,93 @@ function startClip(stream) {
 async function startCapture() {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   audioCtx = new AudioContext();
+  // a context created after a slow permission prompt can start suspended;
+  // the level meter and the clip gate would then read silence forever
+  if (audioCtx.state === "suspended") { try { await audioCtx.resume(); } catch {} }
   analyser = audioCtx.createAnalyser();
   analyser.fftSize = 256;
   audioCtx.createMediaStreamSource(stream).connect(analyser);
-  mic.classList.add("recording");
-  hint.textContent = "Listening… tap again when done";
-  if (!reduceMotion) drawVoiceBars();
+
+  // the mic only reads as live once audio is actually being captured, so
+  // nobody talks into a socket that is still shaking hands
+  const live = () => {
+    mic.classList.add("recording");
+    hint.textContent = "Listening. Tap again when you are done.";
+    if (!reduceMotion) {
+      barsCanvas.classList.remove("idle");
+      drawVoiceBars();
+    }
+  };
 
   if (wsMode && window.AudioWorkletNode) {
     try {
-      // if the server has no realtime stt it answers instantly, before
-      // any speech, so redoing the capture in clip mode goes unnoticed
+      // a server that drops the session later restarts the capture in
+      // clip mode; one that declines on open throws, and we fall through
+      // with the same stream and no second permission prompt
       session = await startStreaming(stream, () => { startCapture().catch(() => {}); });
+      live();
       return;
     } catch {
       wsMode = false;
     }
   }
   startClip(stream);
+  live();
 }
 
+// Ask the backend what it can actually do before offering the mic and
+// before printing any system fact. Without a Sarvam key the clip path
+// returns a mock transcript and the pipeline answers it in earnest,
+// which looks like a working mic giving a wrong answer.
+let voiceReady = true;
+const probe = fetch(API + "/healthz")
+  .then(r => r.json())
+  .then(h => {
+    renderStatus(h);
+    renderResting((h.corpus || {}).abstain_threshold);
+    // Ask before trying. Opening a socket the server cannot serve costs a
+    // round trip and a second getUserMedia prompt, and if it half-works
+    // the client stays on it instead of using the clip path that does.
+    wsMode = h.streaming === true;
+    if (h.voice === false) {
+      voiceReady = false;
+      mic.disabled = true;
+      mic.setAttribute("aria-label", "Voice is unavailable; type a question instead");
+      hint.textContent = "Voice is off on this deployment. Type a question below.";
+    }
+  })
+  .catch(() => {
+    wsMode = false;
+    statusEl.innerHTML = `<div><dt>backend</dt><dd class="off">unreachable</dd></div>`;
+    renderResting(0.85);
+  });
+
+let starting = false;
 mic.addEventListener("click", async () => {
+  if (!voiceReady || starting) return;
   if (session) { session.stop(); return; }
   if (recorder && recorder.state === "recording") { recorder.stop(); return; }
+  // one capture at a time: a second tap while the permission prompt was
+  // up used to open a second recorder that nothing could ever stop
+  starting = true;
   try {
+    hint.textContent = "connecting…";
+    await probe;   // already settled unless the tap beat /healthz
+    if (!voiceReady) return;
     await startCapture();
   } catch {
-    hint.textContent = "Microphone permission needed; or use the text box below";
+    hint.textContent = "Microphone permission needed, or use the text box.";
+  } finally {
+    starting = false;
   }
+});
+
+// ---- example questions ----------------------------------------------
+document.getElementById("examples").addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  document.getElementById("textInput").value = b.textContent;
+  document.getElementById("textForm").requestSubmit();
 });
 
 // ---- text fallback --------------------------------------------------

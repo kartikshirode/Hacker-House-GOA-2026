@@ -7,9 +7,21 @@ for one strategy live together in one directory.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
+
+
+# usearch defaults (connectivity 16, expansion_add 128, expansion_search
+# 64) cost real recall on this corpus. Measured on 20K passages against
+# exact float32 cosine: recall@10 0.9418 at the defaults, 0.9840 by
+# raising expansion_search alone, 0.9918 with the heavier graph as well.
+# The whole difference costs 0.08ms on a retrieve stage that runs in
+# 1.3ms, so the defaults were buying nothing.
+CONNECTIVITY = 32
+EXPANSION_ADD = 256
+EXPANSION_SEARCH = 256
 
 
 class DenseIndex:
@@ -19,21 +31,32 @@ class DenseIndex:
         self.index = index
 
     @classmethod
-    def build(cls, vectors: np.ndarray, out_dir: Path | str) -> "DenseIndex":
+    def build(cls, vectors: np.ndarray, out_dir: Path | str,
+              connectivity: int = CONNECTIVITY,
+              expansion_add: int = EXPANSION_ADD) -> "DenseIndex":
         from usearch.index import Index
 
         out_dir = Path(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
-        idx = Index(ndim=vectors.shape[1], metric="cos", dtype="f16")
+        idx = Index(ndim=vectors.shape[1], metric="cos", dtype="f16",
+                    connectivity=connectivity, expansion_add=expansion_add)
         idx.add(np.arange(len(vectors), dtype=np.int64), vectors)
         idx.save(str(out_dir / cls.FILE))
         return cls(idx)
 
     @classmethod
-    def load(cls, dir: Path | str) -> "DenseIndex":
+    def load(cls, dir: Path | str,
+             expansion_search: int | None = None) -> "DenseIndex":
         from usearch.index import Index
 
         idx = Index.restore(str(Path(dir) / cls.FILE))
+        # query-time only, so an index built at the old defaults still
+        # gets most of the recall back without being rebuilt
+        idx.expansion_search = int(
+            expansion_search
+            if expansion_search is not None
+            else os.environ.get("VAANI_EXPANSION_SEARCH") or EXPANSION_SEARCH
+        )
         return cls(idx)
 
     def search(self, vecs: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
