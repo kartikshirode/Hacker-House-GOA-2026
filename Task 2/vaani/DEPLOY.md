@@ -114,6 +114,11 @@ vercel deploy --prod          # redeploy
 vercel env ls                 # VAANI_API lives here
 ```
 
+Before a deploy run `node web/tests/ws_race.test.mjs`. It replays the
+socket refusal the backend sends when realtime stt is off, the race that
+made the mic need several taps, and fails if the page ever drops that
+first message again.
+
 ## Frontend design
 
 Light, monochrome, instrument-panel. Locked to light with `color-scheme:
