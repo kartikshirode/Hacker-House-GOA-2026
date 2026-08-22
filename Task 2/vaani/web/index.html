@@ -24,6 +24,10 @@
     --ink-3:      #91919b;
     --rule:       #e6e6e1;
     --rule-2:     #cecec8;
+    /* the one accent, sampled from hhgoa.com. 7.0:1 on paper, so it is
+       safe for text and for white-on-green buttons alike */
+    --goa:        #0b6839;
+    --goa-sunk:   #f0f5f2;
 
     /* One radius scale: 4px everywhere. The mic is the single exception
        and it is a full circle, because it is the only thing you press to
@@ -67,6 +71,7 @@
   .wordmark {
     font-family: "Tiro Devanagari Hindi", serif;
     font-size: 23px; letter-spacing: .01em; white-space: nowrap;
+    color: var(--goa);
   }
   .wordmark .latin {
     font-family: var(--sans);
@@ -98,10 +103,10 @@
     transition: background .18s var(--ease), border-color .18s var(--ease), transform .12s var(--ease);
   }
   #mic svg { width: 21px; height: 21px; }
-  #mic:hover:not(:disabled) { border-color: var(--ink); }
+  #mic:hover:not(:disabled) { border-color: var(--goa); }
   #mic:active:not(:disabled) { transform: scale(.96); }
-  #mic:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
-  #mic.recording { background: var(--ink); border-color: var(--ink); color: var(--panel); }
+  #mic:focus-visible { outline: 2px solid var(--goa); outline-offset: 3px; }
+  #mic.recording { background: var(--goa); border-color: var(--goa); color: #fff; }
   #mic:disabled { cursor: not-allowed; color: var(--ink-3); border-color: var(--rule); }
 
   #textForm { flex: 1; display: flex; gap: 10px; }
@@ -114,19 +119,19 @@
     transition: border-color .18s var(--ease);
   }
   #textInput::placeholder { color: var(--ink-3); }
-  #textInput:focus { outline: none; border-color: var(--ink); }
+  #textInput:focus { outline: none; border-color: var(--goa); }
   #textForm button {
     flex: none;
     font-family: var(--sans); font-size: 14px; font-weight: 600;
     letter-spacing: .02em;
-    color: var(--panel); background: var(--ink);
-    border: 1px solid var(--ink); border-radius: var(--r);
+    color: #fff; background: var(--goa);
+    border: 1px solid var(--goa); border-radius: var(--r);
     padding: 0 26px; cursor: pointer; white-space: nowrap;
     transition: opacity .18s var(--ease), transform .12s var(--ease);
   }
   #textForm button:hover { opacity: .84; }
   #textForm button:active { transform: translateY(1px); }
-  #textForm button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  #textForm button:focus-visible { outline: 2px solid var(--goa); outline-offset: 2px; }
 
   .hint {
     font-size: 13px; color: var(--ink-2);
@@ -152,7 +157,7 @@
 
   /* No card. A left rule carries the hierarchy, which keeps the answer
      feeling like text rather than a widget. */
-  .answer-card { border-left: 2px solid var(--ink); padding-left: 20px; display: none; }
+  .answer-card { border-left: 2px solid var(--goa); padding-left: 20px; display: none; }
   .answer-card.visible { display: block; }
   .answer-card.refused { border-left-color: var(--rule-2); }
   .eyebrow {
@@ -167,7 +172,7 @@
   .chip {
     font-family: var(--mono); font-size: 11px; color: var(--ink-2);
     border: 1px solid var(--rule-2); border-radius: var(--r);
-    padding: 3px 8px; background: var(--sunk);
+    padding: 3px 8px; background: var(--goa-sunk);
   }
   .total-line {
     font-family: var(--mono); font-size: 11.5px; color: var(--ink-3);
@@ -193,7 +198,7 @@
      progress track. The gate position is the point of the graphic. */
   .gauge { position: relative; height: 30px; }
   .gauge-track { position: absolute; left: 0; right: 0; top: 12px; height: 1px; background: var(--rule-2); }
-  .gauge-fill { position: absolute; left: 0; top: 10px; height: 5px; background: var(--ink); }
+  .gauge-fill { position: absolute; left: 0; top: 10px; height: 5px; background: var(--goa); }
   .gauge-gate { position: absolute; top: 4px; width: 1px; height: 17px; background: var(--ink); z-index: 2; }
   .gauge-fill { z-index: 1; }
   .gauge-track + .gauge-gate::before {
