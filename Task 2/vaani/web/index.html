@@ -358,7 +358,7 @@ const css = name => getComputedStyle(document.documentElement).getPropertyValue(
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 let recorder = null, chunks = [], audioCtx = null, analyser = null, rafId = null;
-let wsMode = true;   // streaming first; drops to clip mode if the server declines
+let wsMode = null;   // unknown until /healthz answers; true only when the server streams
 let session = null;  // live streaming session, null otherwise
 let streamBuf = "";
 
@@ -612,10 +612,27 @@ async function startStreaming(stream, onUnavailable) {
   const origin = API || `${location.protocol}//${location.host}`;
   const ws = new WebSocket(origin.replace(/^http/, "ws") + "/ws/voice");
   ws.binaryType = "arraybuffer";
+
+  // The server may answer the moment the socket opens; with realtime stt
+  // off it sends an error in the same read as the open frame. A handler
+  // attached after the worklet load below misses it, the close that
+  // follows silently resets the mic, and the page never learns to stop
+  // trying the socket. So messages go through `handle` from the first
+  // instant, and until the worklet is wired its only job is to remember
+  // a refusal.
+  let serverError = null;
+  let handle = msg => { if (msg.type === "error") serverError = msg.message || "refused"; };
+  ws.onmessage = e => { try { handle(JSON.parse(e.data)); } catch {} };
   await new Promise((ok, no) => { ws.onopen = ok; ws.onerror = no; });
 
   const workletUrl = URL.createObjectURL(new Blob([WORKLET_SRC], { type: "text/javascript" }));
   await audioCtx.audioWorklet.addModule(workletUrl);
+  if (serverError || ws.readyState !== WebSocket.OPEN) {
+    // declined before any audio moved: hand the same live stream back to
+    // the caller, which falls through to the clip path
+    ws.close();
+    throw new Error(serverError || "socket closed before streaming started");
+  }
   const node = new AudioWorkletNode(audioCtx, "pcm-forwarder");
   const sampleRate = audioCtx.sampleRate;
   let speaking = false;
@@ -651,6 +668,7 @@ async function startStreaming(stream, onUnavailable) {
   let gotResult = false;
   let stopped = false;
   let finished = false;
+  let outcome = null;   // "result" | "error" | "silent", null while undecided
 
   // idempotent: runs once no matter which path gets here first, so the
   // mic never stays hot after a result, an error or a dropped socket
@@ -665,8 +683,7 @@ async function startStreaming(stream, onUnavailable) {
     cancelAnimationFrame(rafId);
   };
 
-  ws.onmessage = e => {
-    const msg = JSON.parse(e.data);
+  handle = msg => {
     if (msg.type === "partial") {
       transcriptEl.textContent = msg.text;
       transcriptEl.classList.add("partial");
@@ -678,6 +695,7 @@ async function startStreaming(stream, onUnavailable) {
       showToken(msg.text);
     } else if (msg.type === "result") {
       gotResult = true;
+      outcome = "result";
       streamBuf = "";
       finish();
       render(msg);
@@ -685,6 +703,7 @@ async function startStreaming(stream, onUnavailable) {
       ws.close();
       session = null;
     } else if (msg.type === "error") {
+      outcome = "error";
       wsMode = false;
       finish();
       ws.close();
@@ -695,7 +714,11 @@ async function startStreaming(stream, onUnavailable) {
   ws.onclose = () => {
     finish();
     session = null;
-    if (!gotResult && wsMode && stopped) hint.textContent = "Tap the mic to try again.";
+    // a socket that ends with no verdict has to say so, or the mic just
+    // goes idle under a hint that still reads "Listening"
+    if (!outcome) hint.textContent = stopped
+      ? "No answer came back. Tap the mic to try again."
+      : "The stream dropped. Tap the mic to try again.";
   };
 
   return {
@@ -704,6 +727,7 @@ async function startStreaming(stream, onUnavailable) {
       if (!sentAny) {
         // the gate never opened, so nothing was streamed. Waiting on a
         // transcript that cannot arrive is what makes the mic look dead.
+        outcome = "silent";
         finish();
         ws.close();
         session = null;
@@ -768,27 +792,38 @@ function startClip(stream) {
 async function startCapture() {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   audioCtx = new AudioContext();
+  // a context created after a slow permission prompt can start suspended;
+  // the level meter and the clip gate would then read silence forever
+  if (audioCtx.state === "suspended") { try { await audioCtx.resume(); } catch {} }
   analyser = audioCtx.createAnalyser();
   analyser.fftSize = 256;
   audioCtx.createMediaStreamSource(stream).connect(analyser);
-  mic.classList.add("recording");
-  hint.textContent = "Listening. Tap again when you are done.";
-  if (!reduceMotion) {
-    barsCanvas.classList.remove("idle");
-    drawVoiceBars();
-  }
+
+  // the mic only reads as live once audio is actually being captured, so
+  // nobody talks into a socket that is still shaking hands
+  const live = () => {
+    mic.classList.add("recording");
+    hint.textContent = "Listening. Tap again when you are done.";
+    if (!reduceMotion) {
+      barsCanvas.classList.remove("idle");
+      drawVoiceBars();
+    }
+  };
 
   if (wsMode && window.AudioWorkletNode) {
     try {
-      // if the server has no realtime stt it answers instantly, before
-      // any speech, so redoing the capture in clip mode goes unnoticed
+      // a server that drops the session later restarts the capture in
+      // clip mode; one that declines on open throws, and we fall through
+      // with the same stream and no second permission prompt
       session = await startStreaming(stream, () => { startCapture().catch(() => {}); });
+      live();
       return;
     } catch {
       wsMode = false;
     }
   }
   startClip(stream);
+  live();
 }
 
 // Ask the backend what it can actually do before offering the mic and
@@ -796,7 +831,7 @@ async function startCapture() {
 // returns a mock transcript and the pipeline answers it in earnest,
 // which looks like a working mic giving a wrong answer.
 let voiceReady = true;
-fetch(API + "/healthz")
+const probe = fetch(API + "/healthz")
   .then(r => r.json())
   .then(h => {
     renderStatus(h);
@@ -804,7 +839,7 @@ fetch(API + "/healthz")
     // Ask before trying. Opening a socket the server cannot serve costs a
     // round trip and a second getUserMedia prompt, and if it half-works
     // the client stays on it instead of using the clip path that does.
-    if (h.streaming === false) wsMode = false;
+    wsMode = h.streaming === true;
     if (h.voice === false) {
       voiceReady = false;
       mic.disabled = true;
@@ -813,18 +848,28 @@ fetch(API + "/healthz")
     }
   })
   .catch(() => {
+    wsMode = false;
     statusEl.innerHTML = `<div><dt>backend</dt><dd class="off">unreachable</dd></div>`;
     renderResting(0.85);
   });
 
+let starting = false;
 mic.addEventListener("click", async () => {
-  if (!voiceReady) return;
+  if (!voiceReady || starting) return;
   if (session) { session.stop(); return; }
   if (recorder && recorder.state === "recording") { recorder.stop(); return; }
+  // one capture at a time: a second tap while the permission prompt was
+  // up used to open a second recorder that nothing could ever stop
+  starting = true;
   try {
+    hint.textContent = "connecting…";
+    await probe;   // already settled unless the tap beat /healthz
+    if (!voiceReady) return;
     await startCapture();
   } catch {
     hint.textContent = "Microphone permission needed, or use the text box.";
+  } finally {
+    starting = false;
   }
 });
 
