@@ -4,7 +4,7 @@ Written Aug 14, 2026 evening. Deadline is Aug 22, 11:59 PM IST. Cluster access e
 
 ## What this is
 
-HH Goa 2026 Task 2: a voice RAG over `ai4bharat/MSMARCO-XI`. You speak in Hindi or English, Sarvam transcribes, we retrieve from 950K passages and a small model answers, all under 200ms after the transcript. The task PDF sits at `Task 2/task 2_ hhg.pdf` in the repo root. Read [README.md](README.md) first, it carries the measured state. Design thinking is in [docs/design.md](docs/design.md).
+HH Goa 2026 Task 2: a voice RAG over `ai4bharat/MSMARCO-XI`. You speak in Hindi or English, Sarvam transcribes, we retrieve from 950K passages and a small model answers, all under 200ms after the transcript. The task PDF is in the HHG repo at `Task 2/task 2_ hhg.pdf` (github.com/kartikshirode/Hacker-House-GOA-2026). Read [README.md](README.md) first, it carries the measured state. Design thinking is in [docs/design.md](docs/design.md).
 
 Repo: github.com/kartikshirode/Hacker-House-GOA-2026, public, `main` is the truth. Project lives under `Task 2/vaani`.
 
