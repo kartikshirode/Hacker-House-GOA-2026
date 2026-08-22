@@ -78,3 +78,45 @@ def test_missing_key_raises_before_spending(tmp_path):
     stt = SarvamSTT(api_key="", cache_dir=tmp_path, usage_log=tmp_path / "u.jsonl", mock=False)
     with pytest.raises(RuntimeError, match="SARVAM_API_KEY"):
         stt.transcribe_bytes(b"audio")
+
+
+def test_budget_ceiling_refuses_instead_of_spending(tmp_path):
+    """The ledger recorded spend before but nothing enforced it; a public
+    link with no ceiling can drain the balance in minutes."""
+    from vaani.stt import BudgetExceeded
+
+    log = tmp_path / "usage.jsonl"
+    log.write_text('{"ts":"x","audio_seconds":3600,"est_rupees":30.0}\n', encoding="utf-8")
+    stt = SarvamSTT(api_key="k", mock=False, cache_dir=tmp_path / "c",
+                    usage_log=log)
+    stt.budget_rupees = 25.0
+    stt._spent = None
+    assert stt.budget_left() < 0
+    with pytest.raises(BudgetExceeded):
+        stt.transcribe_bytes(b"audio-bytes", filename="clip.webm")
+
+
+def test_oversized_clip_refused_before_the_api_call(tmp_path):
+    from vaani.stt import BudgetExceeded
+
+    stt = SarvamSTT(api_key="k", mock=False, cache_dir=tmp_path / "c",
+                    usage_log=tmp_path / "u.jsonl")
+    stt.max_clip_bytes = 100
+    with pytest.raises(BudgetExceeded):
+        stt.transcribe_bytes(b"x" * 101, filename="clip.webm")
+
+
+def test_cached_replay_is_free_even_past_the_budget(tmp_path):
+    """Replays cost nothing, so they must stay answerable once the
+    budget is gone; the cap sits after the cache lookup for this."""
+    cache = tmp_path / "c"
+    log = tmp_path / "u.jsonl"
+    stt = SarvamSTT(api_key="k", mock=False, cache_dir=cache, usage_log=log)
+    key = stt._cache_key(b"audio-bytes", "unknown")
+    cache.mkdir(parents=True, exist_ok=True)
+    stt._cache_path(key).write_text(
+        '{"text":"already paid for","language_code":"hi-IN"}', encoding="utf-8")
+    stt.budget_rupees = 0.0001
+    stt._spent = 999.0
+    result = stt.transcribe_bytes(b"audio-bytes")
+    assert result.cached and result.text == "already paid for"

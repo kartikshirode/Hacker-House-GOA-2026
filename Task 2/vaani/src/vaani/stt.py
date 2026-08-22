@@ -33,6 +33,17 @@ except ImportError:
 SARVAM_STT_URL = "https://api.sarvam.ai/speech-to-text"
 RUPEES_PER_SECOND = 30.0 / 3600.0  # ₹30 per audio hour
 
+# A public link with no ceiling can drain the balance in minutes, so the
+# caps are on by default and opting out means saying so out loud.
+DEFAULT_BUDGET_RUPEES = 25.0
+DEFAULT_MAX_CLIP_BYTES = 1_000_000
+
+
+class BudgetExceeded(RuntimeError):
+    """Raised instead of spending past a cap. Callers turn this into a
+    refusal; it is never a 500, because refusing on purpose is the
+    designed behaviour here, not a fault."""
+
 
 class TranscriptResult(BaseModel):
     text: str
@@ -61,6 +72,10 @@ class SarvamSTT:
         self.usage_log = Path(usage_log)
         self.mock = mock if mock is not None else os.environ.get("VAANI_STT_MOCK") == "1"
         self.client = httpx.Client(timeout=timeout_s)
+        # 0 disables a cap; unset falls back to the defaults above
+        self.budget_rupees = _env_float("VAANI_STT_BUDGET_RUPEES", DEFAULT_BUDGET_RUPEES)
+        self.max_clip_bytes = int(_env_float("VAANI_STT_MAX_CLIP_BYTES", DEFAULT_MAX_CLIP_BYTES))
+        self._spent: float | None = None  # ledger total, read once then cached
 
     # -- helpers ---------------------------------------------------------
 
@@ -82,15 +97,24 @@ class SarvamSTT:
         }
         with self.usage_log.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
+        self._spent = None  # force a re-read; only happens after a real call
 
     def spent_rupees(self) -> float:
-        if not self.usage_log.exists():
-            return 0.0
+        if self._spent is not None:
+            return self._spent
         total = 0.0
-        for line in self.usage_log.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                total += json.loads(line)["est_rupees"]
-        return round(total, 2)
+        if self.usage_log.exists():
+            for line in self.usage_log.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    total += json.loads(line)["est_rupees"]
+        self._spent = round(total, 4)
+        return self._spent
+
+    def budget_left(self) -> float:
+        """Rupees left under the ceiling; inf when uncapped."""
+        if not self.budget_rupees:
+            return float("inf")
+        return round(self.budget_rupees - self.spent_rupees(), 4)
 
     # -- transcription ---------------------------------------------------
 
@@ -127,6 +151,17 @@ class SarvamSTT:
                 "or export it before making real STT calls"
             )
 
+        # both checks sit after the cache lookup on purpose: a replay costs
+        # nothing and stays answerable even once the budget is gone
+        if self.max_clip_bytes and len(audio) > self.max_clip_bytes:
+            raise BudgetExceeded(
+                f"clip is {len(audio)} bytes, over the {self.max_clip_bytes} byte cap"
+            )
+        if self.budget_left() <= 0:
+            raise BudgetExceeded(
+                f"stt budget spent: {self.spent_rupees()} of {self.budget_rupees} rupees"
+            )
+
         t0 = time.perf_counter()
         response = self.client.post(
             SARVAM_STT_URL,
@@ -161,3 +196,13 @@ def _wav_seconds(audio: bytes) -> float:
             return w.getnframes() / w.getframerate()
     except Exception:
         return len(audio) / 32000  # 16kHz * 2 bytes
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default

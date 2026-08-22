@@ -112,10 +112,16 @@ class RealtimeSTT:
 
         if not self.api_key:
             raise RuntimeError("SARVAM_API_KEY is not set")
+        # snake_case, verified against the live endpoint on 2026-08-22.
+        # The kebab-case spelling this used to send is rejected outright:
+        # Sarvam closes with 4000 "Missing required query parameter
+        # 'language_code'" before a single audio frame is sent.
+        # stream_type accepts fast | balanced | simulated, and
+        # language_code accepts auto or a real locale, never "unknown".
         query = (
-            f"?model={MODEL}&language-code={self.language}"
-            f"&stream-type={self.stream_type}&mode={self.mode}"
-            f"&input-audio-codec=linear16&input-audio-rate=16000"
+            f"?model={MODEL}&language_code={self.language}"
+            f"&stream_type={self.stream_type}&mode={self.mode}"
+            f"&input_audio_codec=linear16&input_audio_rate=16000"
         )
         self._ws = await websockets.connect(
             self.url + query,

@@ -37,6 +37,36 @@ def load_passages(corpus: Path) -> tuple[list[str], list[str]]:
     return [r[0] for r in rows], [r[1] for r in rows]
 
 
+def encode_with_progress(embedder, texts, batch_size, checkpoint):
+    """Embed in chunks, printing progress and check-pointing as it goes.
+
+    The plain one-shot call prints nothing for hours and saves nothing
+    until it finishes, so a Slurm time limit or a dropped session throws
+    the whole run away and you cannot tell a slow job from a hung one.
+    A re-run picks up the finished chunk file instead of starting over.
+    """
+    if checkpoint.exists():
+        vecs = np.load(checkpoint)
+        if len(vecs) == len(texts):
+            print(f"resuming from {checkpoint} ({len(vecs):,} vectors)")
+            return vecs
+        print(f"{checkpoint} has {len(vecs):,} vectors for {len(texts):,} texts, rebuilding")
+
+    chunk = max(batch_size * 40, 10_000)
+    parts, done, t0 = [], 0, time.perf_counter()
+    for i in range(0, len(texts), chunk):
+        parts.append(embedder.encode_passages(texts[i:i + chunk], batch_size=batch_size))
+        done += len(parts[-1])
+        rate = done / (time.perf_counter() - t0)
+        eta = (len(texts) - done) / rate if rate else 0
+        print(f"  embedded {done:,}/{len(texts):,} "
+              f"({100 * done / len(texts):.1f}%)  {rate:.0f}/s  eta {eta / 60:.1f} min",
+              flush=True)
+    vecs = np.concatenate(parts) if len(parts) > 1 else parts[0]
+    np.save(checkpoint, vecs)
+    return vecs
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", required=True)
@@ -58,7 +88,7 @@ def main() -> None:
     t0 = time.perf_counter()
 
     if args.strategy == "passage":
-        vecs = embedder.encode_passages(eng, batch_size=args.batch)
+        vecs = encode_with_progress(embedder, eng, args.batch, out / "vecs.npy")
         embed_s = time.perf_counter() - t0
         print(f"embedded in {embed_s:.0f}s")
         DenseIndex.build(vecs, out)
